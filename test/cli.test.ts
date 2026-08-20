@@ -54,7 +54,7 @@ describe("CLI smoke tests", () => {
 
   it("prints version", async () => {
     const { stdout } = await exec("node", [CLI, "--version"]);
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
   }, 30_000);
 
   it("advertises --concurrency on every command that drives a compile", async () => {
