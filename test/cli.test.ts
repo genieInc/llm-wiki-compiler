@@ -54,7 +54,10 @@ describe("CLI smoke tests", () => {
 
   it("prints version", async () => {
     const { stdout } = await exec("node", [CLI, "--version"]);
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    // Prerelease suffix accepted: this branch ships as 1.1.0-genieai.N so a
+    // running container can be told apart from upstream 1.1.0, which is the
+    // whole reason the build exists. Still asserts a semver core.
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
   }, 30_000);
 
   it("advertises --concurrency on every command that drives a compile", async () => {
