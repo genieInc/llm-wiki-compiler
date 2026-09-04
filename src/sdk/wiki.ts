@@ -45,14 +45,22 @@ import { loadNonDefaultProfile } from "../profile/block.js";
 import { resolveArtifactRef, declaresArtifactTypes, ArtifactVerifyUnavailableError, type ArtifactHealth } from "../artifacts/resolve.js";
 import type { ArtifactPlannedMutation } from "../trust/planner.js";
 import type { CreateWikiOptions, Wiki, SdkCompileOptions } from "./types.js";
+import { withSemanticBackend } from "../semantic/context.js";
+import { resolveSemanticBackend } from "../semantic/registry.js";
+import type { SemanticBackend } from "../semantic/contracts.js";
+
+/** Async runner shape shared with the smaller SDK facade builders. */
+type QuietRunner = <T>(fn: () => Promise<T>) => Promise<T>;
 
 /**
  * Run `fn` with output scoped quiet via AsyncLocalStorage.
  * Concurrent calls are fully isolated — no global flag is mutated.
  * Declared async so synchronous throws inside `fn` become rejected promises.
  */
-async function runQuiet<T>(fn: () => Promise<T>): Promise<T> {
-  return withQuiet(fn);
+function createQuietRunner(backend?: SemanticBackend): QuietRunner {
+  return async <T>(fn: () => Promise<T>): Promise<T> => withQuiet(
+    () => backend ? withSemanticBackend(backend, fn) : fn(),
+  );
 }
 
 /**
@@ -65,6 +73,7 @@ export function createWiki(options: CreateWikiOptions): Wiki {
   // Normalize once so every delegated call works from an absolute path,
   // independent of any subsequent cwd changes in the calling process.
   const root = path.resolve(options.root);
+  const runQuiet = createQuietRunner(resolveSemanticBackend(options.semanticBackend));
 
   // A missing root is valid — ingest/ingestText create sources/ via recursive mkdir.
   // But if the path already exists and is NOT a directory, it is always a caller mistake.
@@ -112,8 +121,8 @@ export function createWiki(options: CreateWikiOptions): Wiki {
     lint: () => runQuiet(() => lint(root)),
 
     // buildContextPack uses `prompt`/`budget` field names (NOT question/tokenBudget).
-    // Semantic retrieval is opportunistic: falls back to lexical when no embeddings
-    // are available, so no credential guard is needed here.
+    // Semantic retrieval is opportunistic: falls back to lexical when the selected
+    // local/R2R index is unavailable, so no chat-provider guard is needed here.
     getContextPack: (opts) =>
       runQuiet(() =>
         buildContextPack({

@@ -1,0 +1,190 @@
+---
+title: "Semantic Backends: Local JSON and R2R"
+sidebarTitle: "Semantic Backends"
+description: "Choose the default local embeddings.json index or an external R2R semantic backend for larger llmwiki projects."
+---
+
+llmwiki uses a semantic index to retrieve relevant page chunks for `query`,
+`context`, the SDK, and MCP tools. The default index is
+`.llmwiki/embeddings.json`. You can explicitly select an
+[R2R](https://github.com/SciPhi-AI/R2R) deployment instead.
+
+| Backend | Selection | Vector storage and search | Best fit |
+|---|---|---|---|
+| Local JSON | Default, or `LLMWIKI_SEMANTIC_BACKEND=local` | llmwiki embeds locally, loads vectors into the process, and scores them in memory | Small and medium wikis with no extra service |
+| R2R | `LLMWIKI_SEMANTIC_BACKEND=r2r` | R2R embeds, stores, indexes, and searches chunks; llmwiki keeps only a small hash manifest | Large wikis or deployments that already operate R2R |
+
+R2R replaces only the semantic indexing and initial ranking stage. It does not
+replace source compilation, LLM page generation, BM25 reranking, live-page
+loading, or wikilink graph expansion.
+
+## Configure R2R
+
+Start an R2R v3 server and create a collection dedicated to this wiki. Copy the
+collection UUID, then set:
+
+```bash
+export LLMWIKI_SEMANTIC_BACKEND=r2r
+export R2R_BASE_URL=http://localhost:7272
+export R2R_COLLECTION_ID=123e4567-e89b-42d3-a456-426614174000
+export R2R_NAMESPACE=my-team-wiki
+
+llmwiki compile
+```
+
+`R2R_BASE_URL` is the server base URL before `/v3`. The default is
+`http://localhost:7272`. `R2R_COLLECTION_ID` is required and must be a UUID.
+`R2R_NAMESPACE` is also required: choose a stable, lowercase identifier unique
+to this wiki within the collection. llmwiki applies both filters to every
+search, so results from another wiki cannot consume this wiki's candidate
+window. It does not create or choose a collection automatically.
+
+The first compile after selecting R2R indexes every eligible live page, even if
+no source changed. Later compiles directly read and submit only new, changed, or
+deleted page IDs. A periodic full local audit (every 24 hours by default) catches
+out-of-band file edits without making every compile scan the corpus. `query
+--save`, review approval, and Open Knowledge Format import use the same backend.
+
+<Note>
+  R2R owns embedding model selection and vector generation in this mode.
+  `LLMWIKI_EMBEDDING_PROVIDER`, `LLMWIKI_EMBEDDING_MODEL`, and local embedding
+  credentials are not required for semantic indexing. Your selected chat
+  provider is still required for operations that generate text.
+</Note>
+
+## Authentication and projects
+
+For an API-key deployment, set:
+
+```bash
+export R2R_API_KEY=<your-r2r-api-key>
+```
+
+For bearer-token authentication, use this instead:
+
+```bash
+export R2R_ACCESS_TOKEN=<your-access-token>
+```
+
+Do not set both. When your R2R deployment uses named projects, also set
+`R2R_PROJECT_NAME`. llmwiki sends the same `x-api-key`, `Authorization`, and
+`x-project-name` headers used by the R2R SDK.
+
+Use HTTPS for a remote service. llmwiki rejects plain HTTP outside
+`localhost`, `127.0.0.1`, and `::1`. If a trusted private network requires
+plain HTTP, opt in explicitly:
+
+```bash
+export R2R_ALLOW_INSECURE_HTTP=1
+```
+
+This opt-in can expose page text and credentials to anyone who can observe that
+connection. Prefer TLS.
+
+## Retrieval and indexing controls
+
+| Variable | Default | Description |
+|---|---|---|
+| `R2R_SEARCH_MODE` | `basic` | R2R search preset: `basic`, `advanced`, or `custom` |
+| `R2R_TIMEOUT_MS` | `600000` | Timeout for each R2R request in milliseconds |
+| `R2R_INGEST_CONCURRENCY` | `5` | Concurrent document operations; values above `50` are capped |
+| `R2R_MAX_RETRIES` | `3` | Retries for timeouts, transport failures, HTTP 408/425/429, and 5xx responses; capped at `10` |
+| `R2R_RETRY_BASE_DELAY_MS` | `250` | Initial exponential retry delay; capped at `10000` ms |
+| `R2R_FULL_SYNC_INTERVAL_MS` | `86400000` | Interval between full local reconciliation audits; normal sync remains changed-ID-only |
+
+llmwiki requests more remote candidates than it ultimately returns. R2R search
+is collection-and-namespace scoped, graph search is disabled for this vector
+candidate pass, and metadata decoration is disabled so exact-text verification
+remains stable. llmwiki then reads only those local candidate files, applies the
+active profile's `includeInSearch` or `includeInContext` setting, checks
+freshness, and fills the requested top-K. It does not enumerate all wiki pages
+on each remote query. BM25 reranking continues to run locally for `query`.
+
+## Data and trust boundary
+
+Selecting R2R sends retrieval content to the configured service:
+
+- Page title and summary are prefixed to each body chunk.
+- Pages without a body use one title-and-summary chunk.
+- Document metadata includes the qualified page ID, title, schema version, and
+  a content fingerprint.
+
+Only use an R2R deployment whose data-handling policy is acceptable for your
+wiki. A local R2R deployment keeps the network hop on the same machine, but its
+database still contains the submitted content.
+
+llmwiki does not trust R2R as the source of displayed content. Each result must
+match an active document and exact-text hash in a confined local manifest. The
+corresponding wiki file must still be live and hash-current. llmwiki then returns
+text, title, and summary from the live local Markdown file, not from R2R metadata
+or cached result text.
+
+The manifest is written as:
+
+```text
+.llmwiki/r2r-index-<identity-hash>.json
+```
+
+It contains page IDs, R2R document IDs, timestamps, and SHA-256 hashes. It does
+not contain page text or vectors. Endpoint, collection, and project identity
+plus the wiki namespace select the filename, so changing one does not overwrite
+another deployment's reconciliation state. Keep the namespace stable: changing
+it intentionally creates a separate index identity and does not delete documents
+owned by the old namespace.
+
+## Failures and recovery
+
+Semantic indexing remains non-critical by default. An unavailable R2R service
+prints a warning while compile and page writes continue. Set
+`LLMWIKI_EMBED_STRICT=1` when CI should fail on either a local embedding error or
+an R2R synchronization error.
+
+Successful page ingestions are committed even when another page fails. Failed
+page IDs remain in `.llmwiki/pending-embeddings.json` and retry on a later
+compile. Failed deletions remain as orphan document IDs in the R2R manifest and
+retry during the next reconciliation.
+
+Read operations never mutate either index. If R2R is unavailable, its manifest
+is missing, or a result is stale, llmwiki surfaces a warning and uses the
+existing live-page or lexical fallback where that surface supports one.
+
+If an operator deletes R2R documents outside llmwiki, remove the matching local
+R2R manifest and run `llmwiki compile` to rebuild the selected collection state.
+
+## Switch back to local JSON
+
+Unset the selector or set it to `local`, then compile:
+
+```bash
+unset LLMWIKI_SEMANTIC_BACKEND
+llmwiki compile
+```
+
+Selecting R2R does not delete `.llmwiki/embeddings.json`. While R2R is active,
+that file is ignored and not refreshed. The next local compile verifies it
+against live page hashes and repairs missing or stale entries.
+
+The R2R manifest and remote collection also remain intact when you switch back.
+Remove them separately only when you intentionally want to retire that index.
+
+## Backend extension contract
+
+The semantic subsystem is adapter-based. Search, query, context construction,
+provider guards, pending-index reconciliation, and SDK code depend on the
+backend-neutral `SemanticBackend` contract and capability flags; only the R2R
+adapter imports R2R configuration, manifests, response types, or HTTP code.
+
+SDK hosts can select a built-in per Wiki instance without changing process-wide
+environment state:
+
+```ts
+const wiki = createWiki({ root: "./my-wiki", semanticBackend: "r2r" });
+```
+
+They can also pass an object implementing the exported, experimental
+`SemanticBackend` interface. Overrides are isolated with `AsyncLocalStorage`, so
+concurrent Wiki instances may use different adapters safely. The facade checks
+adapter identity, methods, and capabilities up front, then validates every load,
+search, and sync result at runtime before it reaches a consumer. A custom remote
+adapter is responsible for the same trust rule as R2R: use remote data only for
+ranking and rehydrate returned content from confined, current local pages.

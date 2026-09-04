@@ -1,14 +1,14 @@
 /**
- * Semantic and LLM-based page retrieval for llmwiki (v3 pageId pipeline).
+ * Semantic and LLM-based page retrieval for llmwiki (qualified pageId pipeline).
  *
  * Exports `pickSearchRefs`, which resolves relevant pages for a question through
- * the v3 read pipeline ({@link loadEmbeddingsForSearch} → chunk-level, then
- * page-level {@link findRelevantPagesV3}), then falls back to LLM-driven
- * selection over LIVE, surface-eligible, pageId-keyed candidates (NOT the
+ * the selected semantic read pipeline (chunk-level, then page-level), then
+ * falls back to LLM-driven selection over LIVE, surface-eligible,
+ * pageId-keyed candidates (NOT the
  * rendered `index.md` — see {@link selectFallbackRefs}). Every hit carries its
  * qualified `pageId`, so a concept `foo` and a query `foo` are distinct, and a
- * typed page surfaces under its `EntityId`. A degraded (non-v3 / unavailable)
- * store yields a structured warning instead of silently contributing nothing.
+ * typed page surfaces under its `EntityId`. A degraded local or R2R index yields
+ * a structured warning instead of silently contributing nothing.
  *
  * `pickSearchSlugs` is the bare-slug compatibility shim (the legacy contract);
  * `loadSelectedRefs` rehydrates refs to full records from the LIVE files via the
@@ -16,12 +16,11 @@
  */
 
 import {
-  loadEmbeddingsForSearch,
-  findRelevantChunksV3,
-  findRelevantPagesV3,
-  type EmbeddingWarning,
-} from "../utils/embeddings-load.js";
-import type { EmbeddingStoreV3 } from "../utils/embeddings-store.js";
+  loadSemanticReaderForSearch,
+  SemanticBackendError,
+  type SemanticReader,
+  type SemanticWarning,
+} from "../semantic/index.js";
 import {
   loadSelectedPagesByPageId,
   loadPageRecordPairsByPageId,
@@ -40,12 +39,12 @@ import { journalHealthWarning } from "../trust/journal-health-warning.js";
 import type { JournalWarning } from "../trust/journal-health-warning.js";
 
 /**
- * A warning surfaced on a search result: an embedding-degrade signal OR the
+ * A warning surfaced on a search result: a semantic-degrade signal OR the
  * shared journal-health warning (`incomplete-compile` / `journal-unavailable`).
  * The two share a `{ code, message }` shape; a healthy, fully-compiled project
  * surfaces neither, so the default search warnings list stays empty.
  */
-export type SearchWarning = EmbeddingWarning | JournalWarning;
+export type SearchWarning = SemanticWarning | JournalWarning;
 
 /** A selected page reference carrying its qualified identity plus derived slug. */
 export interface SelectedPageRef {
@@ -75,9 +74,9 @@ function dedupeRefs(refs: SelectedPageRef[]): SelectedPageRef[] {
 }
 
 /**
- * Resolve search candidates through the v3 pipeline. Tries chunk-level retrieval
- * first (highest precision), then page-level embeddings, then LLM-driven index
- * selection. Carries forward any degrade warning from the embedding load.
+ * Resolve search candidates through the selected backend. Tries chunk-level retrieval
+ * first (highest precision), then page-level ranking, then LLM-driven index
+ * selection. Carries forward any degrade warning from the semantic load.
  *
  * @param root - Absolute path to the wiki workspace root.
  * @param question - The query used to rank pages.
@@ -85,25 +84,28 @@ function dedupeRefs(refs: SelectedPageRef[]): SelectedPageRef[] {
  */
 export async function pickSearchRefs(root: string, question: string): Promise<SearchSelection> {
   const profile = await loadProfile(root);
-  const outcome = await loadEmbeddingsForSearch(root);
+  const outcome = await loadSemanticReaderForSearch(root);
   // A pending/unavailable compile journal applies to the whole result regardless
   // of which retrieval branch wins, so prepend it to the base warnings ONCE. An
   // ok journal contributes nothing, so the default warnings list is unchanged.
   const journalWarning = await journalHealthWarning(root);
   const base: SearchWarning[] = journalWarning ? [journalWarning, ...outcome.warnings] : outcome.warnings;
   let warnings = base;
-  if (outcome.store) {
-    const semantic = await selectViaEmbeddings(root, outcome.store, question, profile);
-    // Stale entries are a read-path signal regardless of hit count, so enrich the
-    // warnings BEFORE branching — the all-stale/zero-hits fallback must keep it.
-    warnings = withStaleWarning(base, semantic.stalePageIds);
-    if (semantic.refs.length > 0) return { refs: dedupeRefs(semantic.refs), warnings };
+  if (outcome.reader) {
+    try {
+      const semantic = await selectViaSemanticReader(outcome.reader, question, profile);
+      warnings = withStaleWarning(base, semantic.stalePageIds);
+      if (semantic.refs.length > 0) return { refs: dedupeRefs(semantic.refs), warnings };
+    } catch (error) {
+      if (!(error instanceof SemanticBackendError)) throw error;
+      warnings = withSemanticErrorWarning(base, error);
+    }
   }
   const { refs } = await selectFallbackRefs(root, question, "search", profile);
   return { refs, warnings };
 }
 
-/** Outcome of the v3 selection: ordered refs plus the ids dropped for staleness. */
+/** Outcome of semantic selection: ordered refs plus ids dropped for staleness. */
 interface SemanticSelection {
   refs: SelectedPageRef[];
   stalePageIds: PageId[];
@@ -111,8 +113,7 @@ interface SemanticSelection {
 
 /**
  * Append an `embedding-entry-stale` warning when the read pipeline dropped any
- * store entry as stale (not-live / hash-mismatched), mirroring how a non-v3 load
- * surfaces `embedding-index-outdated`. A read-path signal only — the store is
+ * index entry as stale (not-live / hash-mismatched). A read-path signal only — the index is
  * repaired on the next compile, never mutated here.
  */
 export function withStaleWarning(base: SearchWarning[], stalePageIds: PageId[]): SearchWarning[] {
@@ -121,26 +122,50 @@ export function withStaleWarning(base: SearchWarning[], stalePageIds: PageId[]):
     ...base,
     {
       code: "embedding-entry-stale",
-      message: "Some embedding entries are stale (their page changed or was removed); rebuild with 'llmwiki compile'.",
+      message: "Some semantic index entries are stale (their page changed or was removed); rebuild with 'llmwiki compile'.",
     },
   ];
 }
 
-/** Run the chunk-then-page v3 pipeline against a loaded v3 store. */
-async function selectViaEmbeddings(
-  root: string,
-  store: EmbeddingStoreV3,
+/** Append a stable, backend-neutral warning for a classified retrieval failure. */
+export function withSemanticErrorWarning(
+  base: SearchWarning[],
+  error: SemanticBackendError,
+): SearchWarning[] {
+  return [
+    ...base,
+    {
+      code: error.code,
+      message: semanticErrorMessage(error),
+    },
+  ];
+}
+
+/** Keep public fallback messages stable while preserving the actionable error code. */
+function semanticErrorMessage(error: SemanticBackendError): string {
+  if (error.code === "query-embedding-unavailable") {
+    return "Could not embed the query; falling back to live page selection.";
+  }
+  if (error.code === "semantic-retrieval-error") {
+    return "Semantic retrieval failed unexpectedly; falling back to live page selection.";
+  }
+  return "Semantic retrieval is unavailable; falling back to live page selection.";
+}
+
+/** Run the chunk-then-page pipeline against a loaded semantic index. */
+async function selectViaSemanticReader(
+  reader: SemanticReader,
   question: string,
   profile: LoadedProfile,
 ): Promise<SemanticSelection> {
   const { hits: chunkHits, stalePageIds: chunkStale } =
-    await findRelevantChunksV3(root, store, "search", question, CHUNK_TOP_K, profile);
+    await reader.searchChunks({ question, k: CHUNK_TOP_K, profile });
   if (chunkHits.length > 0) {
     const refs = chunkHits.map((c) => ({ pageId: c.pageId, slug: c.slug, title: "", kind: "chunk" as const }));
     return { refs, stalePageIds: chunkStale };
   }
   const { hits: pageHits, stalePageIds: pageStale } =
-    await findRelevantPagesV3(root, store, "search", question, EMBEDDING_TOP_K, profile);
+    await reader.searchPages({ question, k: EMBEDDING_TOP_K, profile });
   const refs = pageHits.map((p) => ({ pageId: p.pageId, slug: p.slug, title: p.title, kind: "page" as const }));
   return { refs, stalePageIds: pageStale };
 }

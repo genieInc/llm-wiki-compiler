@@ -46,14 +46,17 @@ import {
 } from "./page-registry.js";
 import { splitIntoChunks } from "./retrieval.js";
 import { parseQualifiedPageId, type PageId } from "./page-id.js";
+import {
+  pagePassesRetrievalSurface,
+  type RetrievalSurface,
+} from "./retrieval-surface.js";
 import type { LoadedProfile } from "../profile/types.js";
 import type { PageRecord } from "../pages/read.js";
 
 /** Namespace→directory map resolved from the active profile (or reserved-only). */
 type NamespaceDirs = Map<string, string>;
 
-/** Which surface flag a load filters by (each surface filters independently). */
-export type RetrievalSurface = "search" | "context";
+export type { RetrievalSurface } from "./retrieval-surface.js";
 
 /** Structured warning surfaced in the outcome the consumer actually reads (S6). */
 export interface EmbeddingWarning {
@@ -252,17 +255,7 @@ function passesPrefilter(
   profile?: LoadedProfile,
 ): boolean {
   if (!liveIds.has(pageId)) return false;
-  return passesSurfaceFlag(pageId, surface, profile);
-}
-
-/** A typed namespace's `includeInSearch`/`includeInContext` flag (tri-state). */
-function passesSurfaceFlag(pageId: PageId, surface: RetrievalSurface, profile?: LoadedProfile): boolean {
-  const parsed = parseQualifiedPageId(pageId);
-  if (!parsed || !profile) return true;
-  const def = profile.profile.entities[parsed.namespace]?.retrieval;
-  if (!def) return true;
-  const flag = surface === "search" ? def.includeInSearch : def.includeInContext;
-  return flag !== false;
+  return pagePassesRetrievalSurface(pageId, surface, profile);
 }
 
 /** Score page entries by cosine similarity, descending; ties keep input order. */

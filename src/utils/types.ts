@@ -175,7 +175,7 @@ export interface CompileOptions {
    */
   changeFilter?: (change: SourceChange) => boolean;
   /**
-   * Skip schema seed-page generation (but still run index/MOC/link/embedding
+   * Skip schema seed-page generation (but still run index/MOC/link/semantic
    * finalization). Used by `refresh --stale` so a stale-repair run does not
    * write seed pages unrelated to the repair.
    */

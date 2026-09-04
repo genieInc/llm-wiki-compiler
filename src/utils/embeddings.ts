@@ -33,7 +33,7 @@ import { getActiveEmbeddingProviderName } from "./embedding-provider.js";
 import { acquireLockBlocking, releaseLock } from "./lock.js";
 import { loadProfile } from "../profile/load.js";
 import { migrateEmbeddingStore } from "./embeddings-migrate.js";
-import { collectEligibleLivePages, type CollectedPage } from "./embeddings-collect.js";
+import { collectEligibleLivePages, type SemanticSourcePage } from "../semantic/source-pages.js";
 import { reembedIntoStore, type ReembedReport } from "./embeddings-write.js";
 import type { PageId } from "./page-id.js";
 
@@ -145,7 +145,7 @@ function countField(parsedOld: Awaited<ReturnType<typeof readStoreForUpdate>>, f
 function unionReembed(
   reembedPageIds: PageId[],
   changedPageIds: PageId[],
-  collected: CollectedPage[],
+  collected: SemanticSourcePage[],
 ): Set<PageId> {
   const eligible = new Set(collected.map((p) => p.pageId));
   const union = new Set<PageId>(reembedPageIds);
@@ -159,7 +159,7 @@ function unionReembed(
 async function embedAndPersist(
   root: string,
   migrated: EmbeddingStoreV3,
-  collected: CollectedPage[],
+  collected: SemanticSourcePage[],
   reembed: Set<PageId>,
   onDiskVersion: number,
 ): Promise<void> {

@@ -30,16 +30,17 @@ import {
 } from "../utils/constants.js";
 import type { ChunkEmbeddingEntry } from "../utils/embeddings.js";
 import {
-  loadEmbeddingsForSearch,
-  findRelevantChunksV3,
-  findRelevantPagesV3,
-} from "../utils/embeddings-load.js";
+  loadSemanticReaderForSearch,
+  SemanticBackendError,
+  type SemanticReader,
+} from "../semantic/index.js";
 import { loadProfile } from "../profile/load.js";
 import { rerankWithBm25 } from "../utils/retrieval.js";
 import { journalHealthWarning } from "../trust/journal-health-warning.js";
 import {
   loadSelectedRefRecords,
   selectFallbackRefs,
+  withSemanticErrorWarning,
   withStaleWarning,
   type SelectedPageRef,
   type SearchWarning,
@@ -84,11 +85,11 @@ interface SelectedPages {
 }
 
 /**
- * Pick relevant pages through the v3 read pipeline: chunk-aware pre-filter when
- * available, then page-level embeddings, then an LLM fallback over LIVE,
+ * Pick relevant pages through the selected semantic pipeline: chunk-aware
+ * pre-filter when available, then page-level retrieval, then an LLM fallback over LIVE,
  * surface-eligible, pageId-keyed candidates (opted-out typed pages never reach
- * the selector). A degraded (non-v3 / unavailable) store carries its warning
- * through to the result (S6).
+ * the selector). A degraded local or R2R index carries its warning through to
+ * the result (S6).
  */
 async function selectRelevantPages(
   root: string,
@@ -96,12 +97,12 @@ async function selectRelevantPages(
   debug: boolean,
 ): Promise<SelectedPages> {
   const profile = await loadProfile(root);
-  const outcome = await loadEmbeddingsForSearch(root);
+  const outcome = await loadSemanticReaderForSearch(root);
   // A pending/unavailable compile journal applies to the whole answer regardless
   // of which retrieval branch wins, so fold it into the base warnings ONCE. An
   // ok journal contributes nothing, so a healthy query's warnings are unchanged.
   const journalWarning = await journalHealthWarning(root);
-  const base: SearchWarning[] = journalWarning ? [journalWarning, ...outcome.warnings] : outcome.warnings;
+  let base: SearchWarning[] = journalWarning ? [journalWarning, ...outcome.warnings] : outcome.warnings;
   // Stale entries dropped by EITHER read path are accumulated here and folded
   // into the final warnings, so the all-stale/zero-hits fallback still surfaces
   // `embedding-entry-stale` (a read-path signal regardless of hit count).
@@ -111,12 +112,17 @@ async function selectRelevantPages(
     warnings: withStaleWarning(base, stalePageIds),
   });
 
-  if (outcome.store) {
-    const chunkSelection = await trySelectViaChunks(root, outcome.store, question, debug, profile, stalePageIds);
-    if (chunkSelection) return enrich(chunkSelection);
-    const candidates = await findRelevantPagesV3(root, outcome.store, "search", question, EMBEDDING_TOP_K, profile);
-    stalePageIds.push(...candidates.stalePageIds);
-    if (candidates.hits.length > 0) return enrich(await selectFromCandidates(question, candidates.hits));
+  if (outcome.reader) {
+    try {
+      const chunkSelection = await trySelectViaChunks(outcome.reader, question, debug, profile, stalePageIds);
+      if (chunkSelection) return enrich(chunkSelection);
+      const candidates = await outcome.reader.searchPages({ question, k: EMBEDDING_TOP_K, profile });
+      stalePageIds.push(...candidates.stalePageIds);
+      if (candidates.hits.length > 0) return enrich(await selectFromCandidates(question, candidates.hits));
+    } catch (error) {
+      if (!(error instanceof SemanticBackendError)) throw error;
+      base = withSemanticErrorWarning(base, error);
+    }
   }
 
   const { refs, reasoning } = await selectFallbackRefs(root, question, "search", profile);
@@ -145,20 +151,19 @@ async function selectFromCandidates(
 }
 
 /**
- * Attempt chunk-level retrieval + reranking against the loaded v3 store. Returns
+ * Attempt chunk-level retrieval + reranking against the loaded semantic index. Returns
  * null when no chunk hits exist (caller falls back to page-level retrieval). Any
  * stale entries the chunk read dropped are pushed onto `stalePageIds` (even when
  * this returns null) so the caller can surface `embedding-entry-stale`.
  */
 async function trySelectViaChunks(
-  root: string,
-  store: NonNullable<Awaited<ReturnType<typeof loadEmbeddingsForSearch>>["store"]>,
+  reader: SemanticReader,
   question: string,
   debug: boolean,
   profile: Awaited<ReturnType<typeof loadProfile>>,
   stalePageIds: PageId[],
 ): Promise<SelectedPages | null> {
-  const ranked = await tryFindRelevantChunks(root, store, question, profile);
+  const ranked = await findRelevantChunks(reader, question, profile);
   stalePageIds.push(...ranked.stalePageIds);
   if (ranked.chunks.length === 0) return null;
 
@@ -261,26 +266,24 @@ interface ChunkLookup {
 }
 
 /**
- * Chunk-level candidate lookup over the v3 store that never throws. Adapts each
- * live-rehydrated {@link findRelevantChunksV3} hit to the chunk-entry shape the
+ * Chunk-level candidate lookup that never throws. Adapts each live-rehydrated
+ * semantic hit to the chunk-entry shape the
  * BM25 reranker consumes (its `title` is the slug — query provenance shows the
  * slug, not the title) and forwards the read's `stalePageIds` so the caller can
  * surface `embedding-entry-stale`. Provider failures degrade to an empty list.
  */
-async function tryFindRelevantChunks(
-  root: string,
-  store: NonNullable<Awaited<ReturnType<typeof loadEmbeddingsForSearch>>["store"]>,
+async function findRelevantChunks(
+  reader: SemanticReader,
   question: string,
   profile: Awaited<ReturnType<typeof loadProfile>>,
 ): Promise<ChunkLookup> {
-  try {
-    const { hits, stalePageIds } = await findRelevantChunksV3(root, store, "search", question, CHUNK_TOP_K, profile);
-    return { chunks: hits.map((hit) => ({ chunk: toChunkEntry(hit), pageId: hit.pageId, score: hit.score })), stalePageIds };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    output.status("!", output.dim(`Chunk pre-filter unavailable (${message}); falling back.`));
-    return { chunks: [], stalePageIds: [] };
-  }
+  const { hits, stalePageIds } = await reader.searchChunks({ question, k: CHUNK_TOP_K, profile });
+  const chunks = hits.map((hit) => ({
+    chunk: toChunkEntry(hit),
+    pageId: hit.pageId,
+    score: hit.score,
+  }));
+  return { chunks, stalePageIds };
 }
 
 /** Project a v3 chunk hit onto the chunk-entry shape the reranker/citations use. */

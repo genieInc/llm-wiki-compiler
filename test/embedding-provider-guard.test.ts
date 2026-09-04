@@ -25,6 +25,7 @@ import { createEnvSnapshot } from "./fixtures/env-snapshot.js";
 const { setEnv, restore } = createEnvSnapshot([
   "LLMWIKI_PROVIDER",
   "LLMWIKI_EMBEDDING_PROVIDER",
+  "LLMWIKI_SEMANTIC_BACKEND",
   "OPENAI_API_KEY",
   "OPENAI_EMBEDDINGS_API_KEY",
   "OPENAI_EMBEDDINGS_BASE_URL",
@@ -95,5 +96,17 @@ describe("ensureProviderAvailable — the default path stays soft", () => {
     // errors top-down is not told to fix the chat key first and then hit this.
     setEnv({ LLMWIKI_PROVIDER: "openai", LLMWIKI_EMBEDDING_PROVIDER: "minimax" });
     expect(() => ensureProviderAvailable()).toThrow(/LLMWIKI_EMBEDDING_PROVIDER/);
+  });
+});
+
+describe("ensureProviderAvailable — R2R semantic backend", () => {
+  it("does not validate an unused local embedding provider override", () => {
+    setEnv({
+      LLMWIKI_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "k",
+      LLMWIKI_SEMANTIC_BACKEND: "r2r",
+      LLMWIKI_EMBEDDING_PROVIDER: "not-used",
+    });
+    expect(() => ensureProviderAvailable()).not.toThrow();
   });
 });

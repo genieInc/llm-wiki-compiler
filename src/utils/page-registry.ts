@@ -26,17 +26,16 @@
  *   - unknown namespace → dropped (never falls back to `wiki/<namespace>`)
  */
 
-import path from "path";
-import { safeRealpath, isInsideDir } from "./path-confine.js";
-import { readConfinedPage } from "./confined-read.js";
 import { scanEntityDir, type RawEntityScan } from "../wiki/collect.js";
-import { parseFrontmatter } from "./markdown.js";
-import { qualifiedPageId, parseQualifiedPageId, type PageId } from "./page-id.js";
+import { qualifiedPageId, type PageId } from "./page-id.js";
 import { hashChunkText, splitIntoChunks } from "./retrieval.js";
 import { buildEmbeddingText } from "./embeddings-pages.js";
-import { pageEmbedSurfaces } from "./embed-eligibility.js";
-import { isSlugSafe } from "../profile/identity.js";
-import { validateEntityFields } from "../profile/field-contract.js";
+import {
+  isReservedPageEligible,
+  isTypedPageIndexEligible,
+  isTypedPageSurfaceEligible,
+} from "./page-eligibility.js";
+import { resolveConfinedPage } from "./page-resolve.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "./constants.js";
 import type { PageRecord } from "../pages/read.js";
 import type { ProfilePack, LoadedProfile, EntityTypeDef } from "../profile/types.js";
@@ -83,25 +82,11 @@ const RESERVED_NAMESPACES = new Set(["concepts", "queries"]);
  * stale or forged v3 store (F2).
  */
 function isLegacyScanEligible(scan: RawEntityScan): boolean {
-  return scan.parseStatus.orphaned !== true && scan.parseStatus.hasTitle;
+  return isReservedPageEligible(scan.frontmatter);
 }
 
 /** A retrieval surface a typed page's `RetrievalDef` flag is consulted for. */
 type SurfaceName = "search" | "context";
-
-/**
- * True when a typed-namespace scan is PROFILE-VALID: slug-safe stem, any declared
- * frontmatter `slug` matches the stem, and the field contract is satisfied.
- * The shared precondition for every typed-page eligibility decision (embed-set,
- * search-fallback, context-fallback) — separated from the surface-flag check so
- * each caller can ask its own surface question without re-deriving validity.
- */
-function isTypedScanProfileValid(scan: RawEntityScan, def: EntityTypeDef): boolean {
-  if (!isSlugSafe(scan.stem)) return false;
-  const declaredSlug = typeof scan.frontmatter.slug === "string" ? scan.frontmatter.slug : undefined;
-  if (declaredSlug !== undefined && declaredSlug !== scan.stem) return false;
-  return validateEntityFields(scan.frontmatter, def).length === 0;
-}
 
 /**
  * True when a profile-valid typed scan is eligible for the given retrieval
@@ -110,9 +95,7 @@ function isTypedScanProfileValid(scan: RawEntityScan, def: EntityTypeDef): boole
  * read-side fallback and the write gate share one truth table (F2/F3).
  */
 function isTypedScanSurfaceEligible(scan: RawEntityScan, def: EntityTypeDef, surface: SurfaceName): boolean {
-  if (!isTypedScanProfileValid(scan, def)) return false;
-  const surfaces = pageEmbedSurfaces({ meta: scan.frontmatter, pageKind: "typed", retrieval: def.retrieval, isProfileInvalid: false });
-  return surface === "search" ? surfaces.inSearch : surfaces.inContext;
+  return isTypedPageSurfaceEligible(scan.stem, scan.frontmatter, def, surface);
 }
 
 /**
@@ -123,9 +106,7 @@ function isTypedScanSurfaceEligible(scan: RawEntityScan, def: EntityTypeDef, sur
  * the write gate never diverge (F2).
  */
 function isTypedScanEligible(scan: RawEntityScan, def: EntityTypeDef): boolean {
-  if (!isTypedScanProfileValid(scan, def)) return false;
-  const surfaces = pageEmbedSurfaces({ meta: scan.frontmatter, pageKind: "typed", retrieval: def.retrieval, isProfileInvalid: false });
-  return surfaces.embedded;
+  return isTypedPageIndexEligible(scan.stem, scan.frontmatter, def);
 }
 
 /**
@@ -205,34 +186,20 @@ export async function buildLiveRegistryEntry(
   pageId: PageId,
   namespaceDirs?: Map<string, string>,
 ): Promise<LiveRegistryEntry | null> {
-  const parsed = parseQualifiedPageId(pageId);
-  if (!parsed) return null;
-  const { namespace, pagePart } = parsed;
   const dirs = namespaceDirs ?? buildNamespaceDirs();
-  const relDir = dirs.get(namespace);
-  if (!relDir) return null;
-  const canonicalRoot = await safeRealpath(root);
-  if (!canonicalRoot) return null;
-  const expectedCanonicalDir = path.join(canonicalRoot, relDir);
-  const filePath = path.join(expectedCanonicalDir, `${pagePart}.md`);
-  const capturedRealpath = await safeRealpath(filePath);
-  if (!capturedRealpath || !isInsideDir(capturedRealpath, expectedCanonicalDir)) return null;
-  const content = await readConfinedPage(capturedRealpath, expectedCanonicalDir);
-  if (content === null) return null;
-  return buildEntryFromContent(capturedRealpath, expectedCanonicalDir, content);
+  const resolved = await resolveConfinedPage(root, pageId, dirs);
+  if (!resolved) return null;
+  return buildEntryFromRecord(resolved.record, resolved.capturedRealpath, resolved.expectedCanonicalDir);
 }
 
-/** Build a `LiveRegistryEntry` from already-read confined content. */
-function buildEntryFromContent(
+/** Build a `LiveRegistryEntry` from an already-resolved confined page. */
+function buildEntryFromRecord(
+  record: PageRecord,
   capturedRealpath: string,
   expectedCanonicalDir: string,
-  content: string,
 ): LiveRegistryEntry {
-  const { meta, body } = parseFrontmatter(content);
-  const title = typeof meta.title === "string" ? meta.title : "";
-  const summary = typeof meta.summary === "string" ? meta.summary : "";
-  const embeddingTextHash = hashChunkText(buildEmbeddingText({ title, summary }));
-  const chunkHashes = splitIntoChunks(body).map(hashChunkText);
+  const embeddingTextHash = hashChunkText(buildEmbeddingText(record));
+  const chunkHashes = splitIntoChunks(record.body).map(hashChunkText);
   return { capturedRealpath, expectedCanonicalDir, embeddingTextHash, chunkHashes };
 }
 
@@ -320,31 +287,7 @@ async function resolvePageRecord(
   pageId: PageId,
   dirs: Map<string, string>,
 ): Promise<PageRecord | null> {
-  const parsed = parseQualifiedPageId(pageId);
-  if (!parsed) return null;
-  const { namespace, pagePart } = parsed;
-  const relDir = dirs.get(namespace);
-  if (!relDir) return null;
-  const canonicalRoot = await safeRealpath(root);
-  if (!canonicalRoot) return null;
-  const expectedDir = path.join(canonicalRoot, relDir);
-  const filePath = path.join(expectedDir, `${pagePart}.md`);
-  const capturedRealpath = await safeRealpath(filePath);
-  if (!capturedRealpath || !isInsideDir(capturedRealpath, expectedDir)) return null;
-  const content = await readConfinedPage(capturedRealpath, expectedDir);
-  if (content === null) return null;
-  return parsePageRecord(content, pagePart);
-}
-
-/** Parse raw confined content into a `PageRecord`. */
-function parsePageRecord(content: string, pagePart: string): PageRecord {
-  const { meta, body } = parseFrontmatter(content);
-  return {
-    slug: pagePart,
-    title: typeof meta.title === "string" ? meta.title : pagePart,
-    summary: typeof meta.summary === "string" ? meta.summary : "",
-    body: body.trim(),
-  };
+  return (await resolveConfinedPage(root, pageId, dirs))?.record ?? null;
 }
 
 /** A live, surface-eligible page candidate for LLM fallback selection. */

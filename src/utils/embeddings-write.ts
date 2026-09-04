@@ -20,7 +20,7 @@ import type {
   PageEmbeddingV3,
   ChunkEmbeddingV3,
 } from "./embeddings-store.js";
-import type { CollectedPage } from "./embeddings-collect.js";
+import type { SemanticSourcePage } from "../semantic/source-pages.js";
 import type { PageId } from "./page-id.js";
 
 /** A flat chunk work item carrying its parent page identity + position. */
@@ -52,13 +52,13 @@ export interface ReembedReport {
  */
 export async function reembedIntoStore(
   migrated: EmbeddingStoreV3,
-  collected: CollectedPage[],
+  collected: SemanticSourcePage[],
   reembedIds: Set<PageId>,
   batchSize: number,
   expectedDim: number | undefined,
 ): Promise<{ store: EmbeddingStoreV3; report: ReembedReport }> {
   const byId = new Map(collected.map((p) => [p.pageId, p]));
-  const targets = [...reembedIds].map((id) => byId.get(id)).filter((p): p is CollectedPage => Boolean(p));
+  const targets = [...reembedIds].map((id) => byId.get(id)).filter((p): p is SemanticSourcePage => Boolean(p));
   const { provider, requestCount } = makeCountingProvider(getEmbeddingProvider());
   const now = new Date().toISOString();
 
@@ -76,7 +76,7 @@ export async function reembedIntoStore(
 /** Embed the page-level vector for each target, keyed by pageId with its text hash. */
 async function embedPageLevel(
   provider: ReturnType<typeof makeCountingProvider>["provider"],
-  targets: CollectedPage[],
+  targets: SemanticSourcePage[],
   batchSize: number,
   expectedDim: number | undefined,
   now: string,
@@ -98,7 +98,7 @@ async function embedPageLevel(
 /** Embed every chunk of every target in one shared batch, keyed by (pageId, index). */
 async function embedChunkLevel(
   provider: ReturnType<typeof makeCountingProvider>["provider"],
-  targets: CollectedPage[],
+  targets: SemanticSourcePage[],
   batchSize: number,
   expectedDim: number | undefined,
   now: string,
@@ -120,7 +120,7 @@ async function embedChunkLevel(
 }
 
 /** Flatten every target's chunk texts into a deterministic (page, index) work-list. */
-function buildChunkWork(targets: CollectedPage[]): ChunkWork[] {
+function buildChunkWork(targets: SemanticSourcePage[]): ChunkWork[] {
   const work: ChunkWork[] = [];
   for (const page of targets) {
     page.chunkTexts.forEach((text, chunkIndex) => {

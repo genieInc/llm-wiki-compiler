@@ -70,6 +70,7 @@
             "group": "Configuration",
             "pages": [
               "configuration/providers",
+              "configuration/semantic-backends",
               "configuration/environment-variables",
               "configuration/review-policy",
               "configuration/schema",

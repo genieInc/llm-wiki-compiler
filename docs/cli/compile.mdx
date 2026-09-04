@@ -24,13 +24,15 @@ Run from your project root. If `sources/` is empty or doesn't exist yet, compile
 | `--lang <code>` | Override the output language for this compile run (e.g. `zh-CN`, `Chinese`, `ja`, `Japanese`). Wins over the `LLMWIKI_OUTPUT_LANG` environment variable. Unset preserves the model's default behaviour. |
 | `--no-sources-section` | Stop asking the model for a trailing `## Sources` section in generated pages. Provenance is unaffected: the `sources:` frontmatter and the inline `^[file.md:1-5]` citation markers are produced by the compiler and stay exactly as they are. Equivalent to setting `LLMWIKI_SOURCES_SECTION=off`. |
 | `--concurrency <n>` | Maximum LLM calls run in parallel during this compile, across both extraction and page generation. Wins over the `LLMWIKI_COMPILE_CONCURRENCY` environment variable; defaults to `5`. Values above `50` are clamped. |
-| `--verbose` | Print detailed per-step progress: source sizes, concept merge details, page char counts, embedding batch summary, and total compile time. Equivalent to setting `LLMWIKI_VERBOSE=1`. Quiet mode (`--json`) always wins over verbose. |
+| `--verbose` | Print detailed per-step progress: source sizes, concept merge details, page char counts, semantic-index summary, and total compile time. Equivalent to setting `LLMWIKI_VERBOSE=1`. Quiet mode (`--json`) always wins over verbose. |
 
 ## Incremental behaviour
 
 Compile is hash-based and incremental. Each source file's content is fingerprinted on ingest; on subsequent compiles, only sources whose content hash has changed are re-processed through the LLM. Sources that haven't changed are skipped entirely - no API calls, no rewrites. This means re-running `llmwiki compile` after editing a single source touches only the pages that source contributed to, even in a large wiki.
 
-The same incremental logic applies to embeddings: chunk-level embeddings are updated only for pages whose underlying content changed.
+The same incremental logic applies to the semantic index. The local backend
+updates only page and chunk vectors whose content changed. R2R ingests only new
+or changed page documents and deletes documents for removed pages.
 
 Within a single run, both phases call the LLM in parallel: concept extraction across changed sources and page generation across merged concepts both run under one shared concurrency cap. The default is 5 simultaneous calls. On a cold start or a large refresh, raise it with `--concurrency` or [`LLMWIKI_COMPILE_CONCURRENCY`](/configuration/environment-variables#compile) to cut wall-clock; lower it if your provider rate-limits the run. The same flag is available on `llmwiki refresh`, `llmwiki watch`, and `llmwiki quickstart`.
 
@@ -38,10 +40,22 @@ Within a single run, both phases call the LLM in parallel: concept extraction ac
   Very high concurrency on a first compile can slightly reduce cross-reference quality. Page generation reads a handful of sibling pages for `[[wikilink]]` context, so with many pages generating at once, more are written before their neighbours exist. Page content is never corrupted — only the initial interlinking may be less complete. An ordinary re-compile does not backfill it, because unchanged pages are skipped; to get richer sibling-page context, run at a lower concurrency, or force a recompile of the affected sources (edit them, or remove their entries from `.llmwiki/state.json`). The default of 5 is a safe balance; reserve large values for big batch or CI runs where raw speed matters most.
 </Note>
 
-Compile sends page and chunk embeddings to the provider in batches rather than one request at a time, which cuts compile time on cold starts and large refreshes. The embeddings summary reports how many requests this took, for example `Embeddings: 12/12 pages, 84/84 chunks embedded (3 batched requests)`. Tune the request size with [`LLMWIKI_EMBED_BATCH_SIZE`](/configuration/environment-variables#embeddings), or set [`LLMWIKI_EMBED_STRICT`](/configuration/environment-variables#embeddings) to fail the run when an embedding provider is broken or misconfigured.
+With the default local backend, compile sends page and chunk embeddings to the
+provider in batches. The summary reports how many requests this took, for
+example `Embeddings: 12/12 pages, 84/84 chunks embedded (3 batched requests)`.
+Tune the request size with
+[`LLMWIKI_EMBED_BATCH_SIZE`](/configuration/environment-variables#embeddings).
+
+With [R2R selected](/configuration/semantic-backends), compile sends pre-chunked
+page documents to R2R instead. R2R owns vector generation, persistence, and
+indexed lookup. Set
+[`LLMWIKI_EMBED_STRICT`](/configuration/environment-variables#embeddings) to
+fail the run when either backend cannot refresh.
 
 <Note>
-  The summary only prints when embeddings actually run. With no embedding backend configured (for example, the default `anthropic` provider without `VOYAGE_API_KEY`), compile prints `Skipped embeddings update` instead and semantic search is not built.
+  A semantic refresh failure is non-fatal by default. Compile prints a warning,
+  preserves page writes, and retries pending page IDs on a later run. Strict
+  mode changes the exit status; it does not roll back pages already written.
 </Note>
 
 ## What compile produces
@@ -53,9 +67,13 @@ wiki/
   concepts/           one .md file per extracted concept
   index.md            auto-generated table of contents listing all pages
 .llmwiki/
-  embeddings.json     chunk-level and page-level vectors for semantic search
+  embeddings.json     local backend: page and chunk vectors
+  r2r-index-*.json    R2R backend: IDs and freshness hashes, no vectors or text
   state.json          per-source content hashes and compile timestamps
 ```
+
+Only the selected semantic backend is refreshed. Switching backends does not
+delete the other backend's local state.
 
 Each page in `wiki/concepts/` has YAML frontmatter with the page title, summary, kind (`concept`, `entity`, `comparison`, or `overview`), contributing source filenames, confidence, and provenance state. Paragraphs carry `^[source.md]` citation markers; specific claims can pin to line ranges like `^[source.md:42-58]`.
 

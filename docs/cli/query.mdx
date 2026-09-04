@@ -24,7 +24,7 @@ llmwiki query "What is multi-head attention and how does it differ from self-att
 
 | Flag | Description |
 |------|-------------|
-| `--save` | Persist the generated answer as a new wiki page in `wiki/queries/`. The page is immediately added to `index.md` and the embedding store so future queries can use this answer as context. |
+| `--save` | Persist the generated answer as a new wiki page in `wiki/queries/`. The page is immediately added to `index.md` and the selected semantic index so future queries can use this answer as context. |
 | `--lang <code>` | Generate the answer in the specified language (e.g. `zh-CN`, `ja`, `Japanese`). Wins over `LLMWIKI_OUTPUT_LANG`. |
 | `--debug` | Print a retrieval detail snapshot after the answer, showing which pages and chunks were selected, their scores, and whether BM25 reranking changed the order. |
 
@@ -32,11 +32,17 @@ llmwiki query "What is multi-head attention and how does it differ from self-att
 
 `llmwiki query` uses a two-step hybrid retrieval strategy:
 
-1. **Chunk-level semantic search.** The embedding store (`.llmwiki/embeddings.json`) holds vectors for every chunk of every wiki page. Your question is embedded and cosine similarity narrows the full corpus down to a top-K set of the most semantically relevant chunks.
+1. **Chunk-level semantic search.** The selected semantic backend narrows the
+   corpus to a top-K set. The default local backend reads vectors from
+   `.llmwiki/embeddings.json` and scores them in process. The optional R2R
+   backend performs indexed retrieval in your R2R collection.
 
 2. **BM25 reranking.** The top-K chunks are reranked using BM25 (lexical scoring) to surface chunks where your question's exact terms appear prominently. This corrects for cases where semantic similarity alone would pick conceptually adjacent but not directly relevant content.
 
-The final evidence pack is the full content of the selected pages, loaded and passed to the LLM as grounding context. When no embedding store is present, the command falls back to sending the full `wiki/index.md` to the LLM for page selection.
+The final evidence pack is the full content of the selected pages, loaded from
+the live Markdown files and passed to the LLM as grounding context. When no
+usable semantic index is present, the command falls back to LLM page selection
+over live eligible page metadata and surfaces a warning.
 
 If you need wikilink-graph expansion - pulling in pages directly referenced by the top results - use [`llmwiki context`](#llmwiki-context-prompt---json) instead. `context` packages an extended evidence pack with graph neighbors and citation metadata, designed for agent pipelines that build their own prompts.
 
@@ -88,7 +94,7 @@ The `--include-sources` flag is opt-in and appends raw text windows from the ing
 
 ## Compounding queries with `--save`
 
-When you run `llmwiki query "<question>" --save`, the generated answer is written to `wiki/queries/<slug>.md`, added to `index.md`, and immediately indexed in the embedding store. This means the answer becomes context for future queries:
+When you run `llmwiki query "<question>" --save`, the generated answer is written to `wiki/queries/<slug>.md`, added to `index.md`, and immediately indexed in the selected semantic backend. This means the answer becomes context for future queries:
 
 ```bash
 # First query: answer drawn from concept pages only
@@ -120,7 +126,11 @@ $ llmwiki query "How does positional encoding work?" --debug
 ```
 
 <Note>
-`llmwiki query` uses semantic search when an embedding store exists at `.llmwiki/embeddings.json`. If no embedding store is present - for example, when using a provider that doesn't support embeddings, such as GitHub Copilot - query falls back to lexical (full-index) ranking and surfaces a warning. Compile your wiki first to build the embedding store; it is generated automatically during `llmwiki compile`.
+`llmwiki query` uses the local JSON semantic index by default. You can select
+R2R for external indexed retrieval. If the selected index is missing,
+outdated, or unavailable, query falls back to live-page selection and surfaces
+a warning. Run `llmwiki compile` to build or reconcile the index. See
+[Semantic Backends](/configuration/semantic-backends).
 </Note>
 
 For using `query` and `context` via an AI agent, see [MCP Agent Integration](/guides/mcp-agent-integration).

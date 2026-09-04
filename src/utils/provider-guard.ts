@@ -20,6 +20,7 @@
 import { DEFAULT_PROVIDER } from "./constants.js";
 import { resolveAnthropicAuthFromEnv } from "./claude-settings.js";
 import { findEmbeddingProviderProblem } from "./embedding-provider.js";
+import { needsLocalEmbeddingProvider } from "../semantic/index.js";
 
 /** Thrown when the active provider has no usable credentials. */
 export class ProviderUnavailableError extends Error {
@@ -79,7 +80,7 @@ function ensureEmbeddingProviderAvailable(): void {
  * (resolved through the Claude Code settings fallback chain).
  */
 export function ensureProviderAvailable(): void {
-  ensureEmbeddingProviderAvailable();
+  if (needsLocalEmbeddingProvider()) ensureEmbeddingProviderAvailable();
   const provider = process.env.LLMWIKI_PROVIDER ?? DEFAULT_PROVIDER;
 
   if (provider === "anthropic") {

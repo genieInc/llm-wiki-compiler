@@ -93,14 +93,14 @@ Approval does the following in order:
 2. Re-reads the candidate under the lock (to guard against a concurrent reject that may have run between your `review show` and now)
 3. Validates the page body
 4. Writes the page to `wiki/concepts/<slug>.md`
-5. Refreshes wikilink resolution, `wiki/index.md`, the Map of Content, and embeddings
+5. Refreshes wikilink resolution, `wiki/index.md`, the Map of Content, and the selected semantic index
 6. Removes the candidate file from `.llmwiki/candidates/`
 7. Records the approved slug in state so future compiles track it correctly
 
 The page body stored in the candidate is written verbatim - approval never re-invokes the LLM.
 
 <Warning>
-  Embeddings refresh may fail if no provider credentials are configured at approval time. When that happens, a warning is printed but the approval still succeeds - the page is written and the index is updated. Re-run `llmwiki compile` or `llmwiki refresh --stale` later to pick up the missing embeddings.
+  Semantic index refresh may fail if the local embedding provider or R2R is unavailable at approval time. When that happens, a warning is printed but the approval still succeeds - the page and navigation index are written. Re-run `llmwiki compile` later to retry semantic indexing.
 </Warning>
 
 ### `llmwiki review reject <id>`

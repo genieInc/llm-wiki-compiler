@@ -302,8 +302,11 @@ llmwiki is still early software, but it is no longer a toy pipeline for a handfu
 - **Chunk-level embeddings** narrow large wikis before BM25 reranking and graph expansion.
 - **Content-hash-aware embedding updates** avoid recomputing vectors for unchanged pages and chunks.
 - **Batch embedding** sends page and chunk vectors to the provider in batches rather than one request at a time, cutting latency on cold starts and large refreshes.
+- **Optional R2R semantic backend** moves vector generation, persistence, and
+  indexed search out of the monolithic `.llmwiki/embeddings.json` file while
+  keeping local Markdown as the freshness-checked source of returned content.
 - **Cached citation judgements** make repeated `eval --suite full` runs cheaper.
-- **Lexical fallback** keeps query/context workflows usable when the active provider has no embedding endpoint.
+- **Live-page and lexical fallbacks** keep query/context workflows usable when the selected semantic backend is unavailable.
 - **Prompt budgeting and ingest truncation metadata** make large sources explicit instead of silently pretending they fit.
 
 The current sweet spot is a durable project or domain wiki: research folders, codebase docs, team handbooks, standards, design notes, decision logs, or curated source packs. The less ideal fit is a high-churn firehose where raw search is enough and compiled structure would go stale faster than it can be reviewed.
@@ -314,6 +317,7 @@ The full docs site source is in [`docs/`](docs/):
 
 - Start here: [`docs/introduction.mdx`](docs/introduction.mdx)
 - Quickstart: [`docs/quickstart.mdx`](docs/quickstart.mdx)
+- Semantic backends: [`docs/configuration/semantic-backends.mdx`](docs/configuration/semantic-backends.mdx)
 - Installation: [`docs/installation.mdx`](docs/installation.mdx)
 - Karpathy's LLM Wiki pattern: [`docs/concepts/karpathy-pattern.mdx`](docs/concepts/karpathy-pattern.mdx)
 - How the compiler works: [`docs/concepts/how-it-works.mdx`](docs/concepts/how-it-works.mdx)

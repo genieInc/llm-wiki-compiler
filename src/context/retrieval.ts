@@ -1,26 +1,21 @@
 /**
- * Semantic retrieval wrapper for `llmwiki context` (v3 pageId pipeline).
+ * Semantic retrieval wrapper for `llmwiki context` (qualified pageId pipeline).
  *
- * Wraps the v3 read pipeline ({@link loadEmbeddingsForContext} →
- * {@link findRelevantChunksV3}) so the orchestrator never has to special-case
- * provider failures, missing stores, or degraded (non-v3 / unavailable / stale)
- * stores. Semantic retrieval is opportunistic — context packs keep working on
- * lexical signals alone when no usable v3 store is present OR the active provider
- * has no credentials. Each failure mode maps to a stable warning code the JSON
- * contract preserves.
+ * Wraps the backend-neutral read pipeline so the orchestrator never has to
+ * special-case local provider failures, missing stores, R2R outages, or stale
+ * entries. Semantic retrieval is opportunistic: context packs keep working on
+ * lexical signals alone. Each failure mode maps to a stable warning code.
  *
- * Degrade-on-read: a store that is not yet v3 (the writer pre-flip, an absent
- * store, or a stale-model store) yields `embedding-index-outdated` from the
- * loader; we surface that code directly so an agent SEES that the index is
- * outdated rather than getting a silently empty semantic section. The hits carry
- * a qualified `pageId`, and ranking resolves it via `findPageByQualifiedId`.
+ * Local v3 compatibility warning codes remain stable. R2R configuration and
+ * network failures surface as backend warnings. Every hit carries a qualified
+ * `pageId`, and ranking resolves it via `findPageByQualifiedId`.
  */
 
 import {
-  loadEmbeddingsForContext,
-  findRelevantChunksV3,
-  type ChunkHitV3,
-} from "../utils/embeddings-load.js";
+  loadSemanticReaderForContext,
+  SemanticBackendError,
+  type SemanticChunkHit as BackendChunkHit,
+} from "../semantic/index.js";
 import { loadProfile } from "../profile/load.js";
 import { CHUNK_TOP_K } from "../utils/constants.js";
 
@@ -29,6 +24,7 @@ export type SemanticRetrievalWarning =
   | "embedding-store-missing"
   | "embedding-index-outdated"
   | "query-embedding-unavailable"
+  | "semantic-backend-unavailable"
   | "semantic-retrieval-error";
 
 /**
@@ -44,7 +40,7 @@ export interface SemanticChunkHit {
   slug: string;
   /** Chunk body text — surfaced verbatim in `primary[].chunks[].text`. */
   text: string;
-  /** Cosine similarity from the v3 chunk pipeline. */
+  /** Similarity score supplied by the selected semantic backend. */
   score: number;
   /** Live content hash of the chunk text; pass-through into the chunk entry. */
   contentHash: string;
@@ -66,8 +62,8 @@ export interface SemanticRetrievalOutcome {
 }
 
 /**
- * Best-effort semantic retrieval over the v3 store. Returns the top-k chunks the
- * active embedding store can offer for `prompt`, OR a warning explaining why
+ * Best-effort retrieval over the selected semantic index. Returns its top-k
+ * verified chunks for `prompt`, OR a warning explaining why
  * semantic retrieval contributed nothing this call.
  *
  * @param root - Project root path.
@@ -80,13 +76,13 @@ export async function retrieveSemanticChunks(
   topChunks: number,
 ): Promise<SemanticRetrievalOutcome> {
   if (topChunks <= 0) return emptyOutcome(null);
-  const outcome = await loadEmbeddingsForContext(root);
-  if (!outcome.store) return emptyOutcome(mapLoadWarning(outcome.warnings[0]?.code));
+  const outcome = await loadSemanticReaderForContext(root);
+  if (!outcome.reader) return emptyOutcome(mapLoadWarning(outcome.warnings[0]?.code));
 
   try {
     const k = Math.min(topChunks, CHUNK_TOP_K);
     const profile = await loadProfile(root);
-    const { hits, stalePageIds } = await findRelevantChunksV3(root, outcome.store, "context", prompt, k, profile);
+    const { hits, stalePageIds } = await outcome.reader.searchChunks({ question: prompt, k, profile });
     const staleEntriesDetected = stalePageIds.length > 0;
     if (hits.length === 0) return emptyOutcome("embedding-store-missing", staleEntriesDetected);
     return { hits: hits.map(toSemanticChunkHit), warning: null, staleEntriesDetected };
@@ -105,26 +101,20 @@ function emptyOutcome(
 
 /** Map a loader degrade warning code onto the context retrieval warning vocabulary. */
 function mapLoadWarning(code: string | undefined): SemanticRetrievalWarning {
-  if (code === "embedding-index-outdated") return "embedding-index-outdated";
+  if (code === "embedding-index-outdated" || code === "semantic-index-outdated") {
+    return "embedding-index-outdated";
+  }
+  if (code === "semantic-backend-unavailable") return "semantic-backend-unavailable";
   return "embedding-store-missing";
 }
 
 /** Classify failures without leaking raw provider or stack text into JSON. */
 function classifyRetrievalError(err: unknown): SemanticRetrievalWarning {
-  const message = err instanceof Error ? err.message : String(err);
-  return looksLikeProviderFailure(message)
-    ? "query-embedding-unavailable"
-    : "semantic-retrieval-error";
-}
-
-/** Known provider/config/network failures that should keep the legacy warning code. */
-function looksLikeProviderFailure(message: string): boolean {
-  return /api[_ -]?key|auth|credential|token|provider|voyage|openai|ollama|timeout|fetch|econn|enotfound/i
-    .test(message);
+  return err instanceof SemanticBackendError ? err.code : "semantic-retrieval-error";
 }
 
 /** Project a v3 chunk hit onto the ranking-facing shape. */
-function toSemanticChunkHit(hit: ChunkHitV3): SemanticChunkHit {
+function toSemanticChunkHit(hit: BackendChunkHit): SemanticChunkHit {
   return {
     pageId: hit.pageId,
     slug: hit.slug,

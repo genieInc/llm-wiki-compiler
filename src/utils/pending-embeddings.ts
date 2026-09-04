@@ -414,7 +414,7 @@ export function warnQuarantined(quarantined: PendingEmbedding[]): void {
     output.status(
       "!",
       output.warn(
-        `Quarantined pending embedding for ${entry.pageId} after ${entry.attempts} failed refresh attempt(s); ` +
+        `Quarantined pending semantic refresh for ${entry.pageId} after ${entry.attempts} failed attempt(s); ` +
           `it will not be retried. Re-save or edit the source to re-queue it.`,
       ),
     );

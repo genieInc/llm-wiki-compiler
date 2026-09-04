@@ -36,6 +36,26 @@ export {
 export { createWiki } from "./sdk/wiki.js";
 export type { Wiki, CreateWikiOptions, SdkCompileOptions, ContextPackOptions } from "./sdk/types.js";
 
+// @experimental — pluggable semantic storage/retrieval adapter contract.
+export { SemanticBackendError } from "./semantic/contracts.js";
+export type {
+  SemanticBackend,
+  SemanticBackendCapabilities,
+  SemanticBackendErrorCode,
+  SemanticChunkHit,
+  SemanticLoadOutcome,
+  SemanticLoadRequest,
+  SemanticOperation,
+  SemanticPageHit,
+  SemanticReader,
+  SemanticSearchOutcome,
+  SemanticSearchRequest,
+  SemanticSyncFailure,
+  SemanticSyncOutcome,
+  SemanticSyncRequest,
+  SemanticWarning,
+} from "./semantic/contracts.js";
+
 // Result/input types for the Wiki facade methods, re-exported so typed
 // consumers don't have to deep-import from internal module paths.
 export type { IngestResult, CompileResult, QueryResult } from "./utils/types.js";

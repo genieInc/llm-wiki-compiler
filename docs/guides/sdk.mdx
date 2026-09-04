@@ -34,6 +34,27 @@ const wiki = createWiki({ root: "./my-wiki" });
 
 A missing root is valid - `ingest` and `ingestText` create `sources/` via recursive `mkdir` on first write. If the path already exists and is not a directory, `createWiki` throws immediately with a clear error.
 
+### Select or inject a semantic backend
+
+`createWiki` accepts an experimental `semanticBackend` option. A built-in ID
+overrides `LLMWIKI_SEMANTIC_BACKEND` for this Wiki instance only:
+
+```ts
+const wiki = createWiki({
+  root: "./my-wiki",
+  semanticBackend: "r2r",
+});
+```
+
+R2R connection settings still come from the environment. Advanced hosts can
+instead pass an object implementing the exported `SemanticBackend` interface.
+Its identity, methods, and capability fields are validated at construction;
+every load, search, and sync result is validated again when it crosses the
+adapter boundary. The override is scoped with `AsyncLocalStorage`, so
+concurrent Wiki instances can safely use different adapters. Custom remote
+adapters must return current, confined local page content rather than trusting
+remote result text as an output source.
+
 ## Complete example
 
 ```ts
@@ -98,7 +119,9 @@ Both methods return `IngestResult` with `filename`, `chars`, and `truncated` fie
 </ParamField>
 
 <ParamField body="wiki.search(question)" type="Promise<PageRecord[]>">
-  Select and hydrate the most relevant page records for a question. Uses semantic embeddings when available, falls back to LLM-based index selection. **Requires LLM credentials.**
+  Select and hydrate the most relevant page records for a question. Uses the
+  selected [semantic backend](/configuration/semantic-backends) when available,
+  then falls back to LLM-based live-page selection. **Requires LLM credentials.**
 
   Returns an array of full `PageRecord` objects including frontmatter and body.
 </ParamField>
@@ -160,7 +183,10 @@ Both methods return `IngestResult` with `filename`, `chars`, and `truncated` fie
   - `options.topPages` - max primary pages
   - `options.topChunks` - max semantic chunks
 
-  Semantic retrieval is opportunistic - when embeddings are not available the pack falls back to lexical ranking with a warning. No credentials required.
+  Semantic retrieval is opportunistic. When the selected local or R2R index is
+  unavailable, the pack falls back to lexical ranking with a warning. No chat
+  credentials are required; an authenticated R2R deployment still requires its
+  R2R credential in the process environment.
 </ParamField>
 
 <ParamField body="wiki.exportJson(options?)" type="Promise<JsonExportDocument>">

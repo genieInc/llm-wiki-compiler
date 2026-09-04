@@ -37,6 +37,7 @@ import type { ActionRunResult } from "../workflows/run-action.js";
 import type { ProjectionResult } from "../workflows/projection.js";
 import type { ArtifactRef } from "../artifacts/ref.js";
 import type { ArtifactHealth } from "../artifacts/resolve.js";
+import type { SemanticBackend } from "../semantic/contracts.js";
 
 /**
  * @experimental
@@ -73,6 +74,12 @@ export interface SdkWriteArtifactInput {
 export interface CreateWikiOptions {
   /** Absolute or relative path to the project root. Normalized once inside `createWiki`. */
   root: string;
+  /**
+   * @experimental
+   * Built-in backend id or a custom semantic adapter scoped to this Wiki
+   * instance. Omit to use `LLMWIKI_SEMANTIC_BACKEND` (default: `local`).
+   */
+  semanticBackend?: string | SemanticBackend;
 }
 
 /** Compile options exposed through the SDK. A public subset of the core CompileOptions shape. */
@@ -103,8 +110,8 @@ export interface ContextPackOptions {
 
 /**
  * Result of {@link Wiki.search}: the hydrated relevant pages, the qualified
- * page refs that produced them, and any embedding-load `warnings` (e.g.
- * `embedding-index-outdated` when the on-disk index is not yet v3).
+ * page refs that produced them, and semantic-index `warnings` (for example an
+ * outdated local index or an unavailable R2R service).
  */
 export interface SearchResult {
   pages: PageRecord[];
@@ -157,13 +164,14 @@ export interface Wiki {
   /**
    * Pick and hydrate the most relevant pages for a question. Requires LLM credentials.
    *
-   * **Data egress:** the question (and embedding request) is sent to the configured LLM
-   * provider. Wiki page content may also be sent during retrieval scoring.
+   * **Data egress:** with the local backend, the question is sent to the configured
+   * embedding provider. With R2R, it is sent to that service; compilation/index
+   * refreshes also send eligible wiki text to R2R. The selected pages and question
+   * may then be sent to the chat provider by fallback selection.
    *
-   * Returns the hydrated pages plus any `warnings` from the embedding load: an
-   * outdated (non-v3) or unavailable index degrades to lexical/index selection
-   * and reports `embedding-index-outdated` so the caller SEES why semantic
-   * retrieval contributed nothing (S6).
+   * Returns hydrated pages plus any semantic-index warnings. An outdated local
+   * index or unavailable R2R backend degrades to live page selection so callers
+   * can see why semantic retrieval contributed nothing.
    */
   search(question: string): Promise<SearchResult>;
   /**
@@ -207,8 +215,8 @@ export interface Wiki {
   lint(): Promise<LintSummary>;
   /**
    * Build a v1 context pack for agent consumption. Lexical retrieval works
-   * credential-free; semantic retrieval is opportunistic (skipped when no
-   * embeddings are available).
+   * credential-free; semantic retrieval is opportunistic (skipped when the
+   * selected local or R2R index is unavailable).
    */
   getContextPack(options: ContextPackOptions): Promise<ContextPack>;
   /**
@@ -231,8 +239,8 @@ export interface Wiki {
   exportOkf(opts?: { out?: string }): Promise<OkfExportReport>;
   /**
    * Import an OKF bundle. Default stages review candidates; `trusted:true` writes live
-   * (and runs the full refresh — links/index/MOC/EMBEDDINGS, which may incur provider
-   * latency/cost); `dryRun:true` writes nothing.
+   * (and runs the full refresh — links/index/MOC/semantic index, which may incur
+   * provider or R2R latency/cost); `dryRun:true` writes nothing.
    */
   importOkf(dir: string, opts?: { trusted?: boolean; dryRun?: boolean }): Promise<OkfImportReport>;
   /**
