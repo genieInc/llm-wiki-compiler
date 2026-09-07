@@ -1,8 +1,8 @@
 /**
  * @file src/semantic/r2r/adapter.ts
- * @description R2R implementation of the shared semantic backend contract.
- * Configuration, manifests, HTTP calls, remote caches, and reconciliation are
- * contained here and below this directory rather than leaking into consumers.
+ * @description R2R implementation and public factory for the shared semantic
+ * backend contract. Each factory instance closes over an immutable config or
+ * a root-aware resolver, so concurrent tenants never share mutable routing.
  */
 
 import type {
@@ -12,35 +12,86 @@ import type {
   SemanticSearchRequest,
 } from "../contracts.js";
 import { SemanticBackendError } from "../contracts.js";
-import { resolveR2RConfig } from "./config.js";
+import {
+  resolveR2RConfig,
+  resolveR2RConfigOptions,
+  type R2RConfig,
+  type R2RSemanticBackendOptions,
+  type R2RSemanticBackendResolver,
+} from "./config.js";
 import { readR2RManifest } from "./manifest.js";
 import { findRelevantR2RChunks, findRelevantR2RPages } from "./search.js";
 import { syncR2RIndex } from "./sync.js";
 import type { R2RSemanticIndex } from "./types.js";
 
 const R2R_BACKEND_ID = "r2r";
+type R2RConfigProvider = (root: string) => Promise<R2RConfig>;
 
-/** Built-in remote R2R adapter. */
-export const r2rSemanticBackend: SemanticBackend = {
-  id: R2R_BACKEND_ID,
-  capabilities: Object.freeze({
-    needsLocalEmbeddingProvider: false,
-    reconcileWhenIdle: true,
-  }),
-  load: loadR2RReader,
-  sync: ({ root, changedPageIds }) => syncR2RIndex(root, changedPageIds, resolveR2RConfig()),
-  classifyError: (error, operation) => new SemanticBackendError(
+/**
+ * Create an environment-independent R2R semantic backend.
+ *
+ * Static options are validated and snapshotted immediately. A resolver is
+ * called for each load or sync and may safely route concurrent roots to
+ * distinct collections, namespaces, projects, and credentials.
+ *
+ * @param source - Static options or a trusted root-aware binding resolver.
+ * @returns A state-free adapter suitable for `createWiki({ semanticBackend })`.
+ */
+export function createR2RSemanticBackend(
+  source: R2RSemanticBackendOptions | R2RSemanticBackendResolver,
+): SemanticBackend {
+  return buildR2RSemanticBackend(createConfigProvider(source));
+}
+
+/** Built-in CLI adapter; environment resolution stays lazy for each operation. */
+export const r2rSemanticBackend = buildR2RSemanticBackend(
+  async () => resolveR2RConfig(),
+);
+
+/** Build the state-free adapter around one configuration provider. */
+function buildR2RSemanticBackend(resolveConfig: R2RConfigProvider): SemanticBackend {
+  return {
+    id: R2R_BACKEND_ID,
+    capabilities: Object.freeze({
+      needsLocalEmbeddingProvider: false,
+      reconcileWhenIdle: true,
+    }),
+    load: async (request) => loadR2RReader(request, await resolveConfig(request.root)),
+    sync: async ({ root, changedPageIds }) => syncR2RIndex(
+      root,
+      changedPageIds,
+      await resolveConfig(root),
+    ),
+    classifyError: classifyR2RError,
+  };
+}
+
+/** Snapshot static settings eagerly or validate every dynamic tenant result. */
+function createConfigProvider(
+  source: R2RSemanticBackendOptions | R2RSemanticBackendResolver,
+): R2RConfigProvider {
+  if (typeof source === "function") {
+    return async (root) => resolveR2RConfigOptions(
+      await source(Object.freeze({ root })),
+    );
+  }
+  const config = resolveR2RConfigOptions(source);
+  return async () => config;
+}
+
+/** Hide raw resolver, transport, and server errors behind the shared boundary. */
+function classifyR2RError(error: unknown, operation: Parameters<SemanticBackend["classifyError"]>[1]) {
+  return new SemanticBackendError(
     R2R_BACKEND_ID,
     "semantic-backend-unavailable",
     `R2R semantic backend unavailable during ${operation}.`,
     true,
     error instanceof Error ? { cause: error } : undefined,
-  ),
-};
+  );
+}
 
 /** Load the text-free manifest that anchors trusted remote-result mapping. */
-async function loadR2RReader(request: SemanticLoadRequest) {
-  const config = resolveR2RConfig();
+async function loadR2RReader(request: SemanticLoadRequest, config: R2RConfig) {
   const read = await readR2RManifest(request.root, config);
   if (read.kind === "absent") {
     return degraded("semantic-index-outdated", "No R2R semantic index found; rebuild with 'llmwiki compile'.");

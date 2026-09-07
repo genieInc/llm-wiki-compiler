@@ -45,7 +45,11 @@ describe("packaging (slow; run via `npm run test:pack`)", () => {
       expect(name).toMatch(/\.tgz$/);
       await writeFile(path.join(fixture, "package.json"), JSON.stringify({ name: "f", type: "module" }));
       execFileSync("npm", ["install", path.join(out, name)], { cwd: fixture, stdio: "ignore" });
-      await writeFile(path.join(fixture, "probe.mjs"), `import { createWiki } from "llm-wiki-compiler"; if (typeof createWiki !== "function") process.exit(2);`);
+      await writeFile(
+        path.join(fixture, "probe.mjs"),
+        `import { createR2RSemanticBackend, createWiki } from "llm-wiki-compiler";
+if (typeof createWiki !== "function" || typeof createR2RSemanticBackend !== "function") process.exit(2);`,
+      );
       execFileSync("node", ["probe.mjs"], { cwd: fixture, stdio: "ignore" });
     } finally {
       await rm(out, { recursive: true, force: true });   // no .tgz left in the repo

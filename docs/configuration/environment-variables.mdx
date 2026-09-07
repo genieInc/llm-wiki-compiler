@@ -125,6 +125,13 @@ settings are not used, but chat-provider credentials are still required for
 commands that generate text. See [Semantic Backends](/configuration/semantic-backends)
 for setup, data exposure, manifest, recovery, and switching behavior.
 
+These R2R variables configure one process-wide binding. They are suitable for
+the CLI, a tenant-specific child process, or a single-tenant service. An
+in-process multi-tenant SDK host should pass an explicit
+`createR2RSemanticBackend` instance to each Wiki, or use its root-aware async
+resolver; it must not switch tenants by mutating `process.env` concurrently.
+See [Multi-tenant SDK hosts](/configuration/semantic-backends#multi-tenant-sdk-hosts).
+
 ---
 
 ## Embeddings

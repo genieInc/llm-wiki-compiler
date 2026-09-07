@@ -77,7 +77,9 @@ export interface CreateWikiOptions {
   /**
    * @experimental
    * Built-in backend id or a custom semantic adapter scoped to this Wiki
-   * instance. Omit to use `LLMWIKI_SEMANTIC_BACKEND` (default: `local`).
+   * instance. Omit to use `LLMWIKI_SEMANTIC_BACKEND` (default: `local`). For
+   * concurrent R2R tenants, pass `createR2RSemanticBackend(...)` rather than
+   * the `"r2r"` id, whose connection settings are process-environment based.
    */
   semanticBackend?: string | SemanticBackend;
 }

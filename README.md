@@ -305,6 +305,8 @@ llmwiki is still early software, but it is no longer a toy pipeline for a handfu
 - **Optional R2R semantic backend** moves vector generation, persistence, and
   indexed search out of the monolithic `.llmwiki/embeddings.json` file while
   keeping local Markdown as the freshness-checked source of returned content.
+  Multi-tenant SDK hosts can bind immutable per-Wiki settings or a root-aware
+  async resolver with `createR2RSemanticBackend`, without mutating global env.
 - **Cached citation judgements** make repeated `eval --suite full` runs cheaper.
 - **Live-page and lexical fallbacks** keep query/context workflows usable when the selected semantic backend is unavailable.
 - **Prompt budgeting and ingest truncation metadata** make large sources explicit instead of silently pretending they fit.

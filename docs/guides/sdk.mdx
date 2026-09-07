@@ -46,14 +46,82 @@ const wiki = createWiki({
 });
 ```
 
-R2R connection settings still come from the environment. Advanced hosts can
-instead pass an object implementing the exported `SemanticBackend` interface.
-Its identity, methods, and capability fields are validated at construction;
-every load, search, and sync result is validated again when it crosses the
-adapter boundary. The override is scoped with `AsyncLocalStorage`, so
-concurrent Wiki instances can safely use different adapters. Custom remote
-adapters must return current, confined local page content rather than trusting
-remote result text as an output source.
+Selecting `"r2r"` reads R2R connection settings from the process environment.
+That is convenient for the CLI and for a process serving one routing domain.
+An in-process multi-tenant host should instead create an explicit adapter:
+
+```ts
+import { createR2RSemanticBackend, createWiki } from "llm-wiki-compiler";
+
+const wiki = createWiki({
+  root: "./tenant-a-wiki",
+  semanticBackend: createR2RSemanticBackend({
+    baseUrl: "https://r2r.example.com",
+    collectionId: "123e4567-e89b-42d3-a456-426614174000",
+    namespace: "tenant-a-wiki",
+    apiKey: process.env.R2R_API_KEY,
+  }),
+});
+```
+
+Explicit R2R options are validated and snapshotted when the adapter is created.
+They do not inherit any R2R routing, tuning, or credentials from `process.env`.
+Chat-provider configuration remains independent and continues to use the
+normal provider settings.
+
+For a service that shares one adapter across many Wiki roots, pass a trusted
+async resolver. The host owns collection provisioning and the mapping between
+its tenant identity and each R2R binding; llmwiki neither imports the host's
+database layer nor creates collections implicitly:
+
+```ts
+const commonR2R = {
+  baseUrl: "https://r2r.example.com",
+  apiKey: process.env.R2R_API_KEY,
+};
+
+const backend = createR2RSemanticBackend(async ({ root }) => {
+  const binding = await semanticBindings.findByWikiRoot(root);
+  if (!binding) throw new Error("No semantic binding for wiki root");
+  return {
+    ...commonR2R,
+    collectionId: binding.collectionId,
+    namespace: binding.namespace,
+  };
+});
+
+const tenantA = createWiki({ root: "./tenant-a", semanticBackend: backend });
+const tenantB = createWiki({ root: "./tenant-b", semanticBackend: backend });
+await Promise.all([tenantA.search("roadmap"), tenantB.search("roadmap")]);
+```
+
+The resolver receives the normalized absolute Wiki root. Its result is
+validated independently on every load or synchronization. A load captures an
+immutable snapshot in that reader; a sync uses one immutable snapshot for its
+whole reconciliation. `AsyncLocalStorage` scopes the selected backend to each
+Wiki call tree, while the R2R reader keeps request-local cache state. Do not
+mutate `process.env` to switch tenants between concurrent calls.
+
+Resolvers can run concurrently and should be safe to call more than once.
+llmwiki does not keep an unbounded root-to-tenant cache; hosts that need to
+reduce configuration-store reads can add a bounded, authorization-aware TTL
+cache inside the resolver. This also leaves credential rotation and tenant
+revocation policy under the host's control.
+
+A dedicated collection and namespace per tenant gives the strongest isolation.
+A shared collection with a unique namespace per tenant is supported by the
+retrieval filter, but R2R collection-level permissions then cover all tenants
+in that collection; treat that as an explicit security tradeoff. Prefer
+collection-scoped, least-privilege credentials, and authorize the requested
+tenant before resolving its binding. Collection IDs and namespaces must come
+from trusted host configuration rather than request parameters.
+
+Advanced hosts can also pass an object implementing the exported
+`SemanticBackend` interface. Its identity, methods, and capability fields are
+validated at construction; every load, search, and sync result is validated
+again at the adapter boundary. Custom remote adapters must return current,
+confined local page content rather than trusting remote result text as an
+output source.
 
 ## Complete example
 

@@ -39,6 +39,11 @@ to this wiki within the collection. llmwiki applies both filters to every
 search, so results from another wiki cannot consume this wiki's candidate
 window. It does not create or choose a collection automatically.
 
+The environment selector is process-wide. It is appropriate for an interactive
+CLI process, a child process launched with a tenant-specific environment, or a
+service that owns exactly one wiki binding. Do not change `process.env` between
+concurrent tenant requests.
+
 The first compile after selecting R2R indexes every eligible live page, even if
 no source changed. Later compiles directly read and submit only new, changed, or
 deleted page IDs. A periodic full local audit (every 24 hours by default) catches
@@ -51,6 +56,73 @@ out-of-band file edits without making every compile scan the corpus. `query
   credentials are not required for semantic indexing. Your selected chat
   provider is still required for operations that generate text.
 </Note>
+
+## Multi-tenant SDK hosts
+
+Applications serving several wiki roots in one process should use the exported
+R2R factory instead of selecting the environment-backed `"r2r"` adapter:
+
+```ts
+import { createR2RSemanticBackend, createWiki } from "llm-wiki-compiler";
+
+function openTenantWiki(tenant: TenantRecord) {
+  return createWiki({
+    root: tenant.wikiRoot,
+    semanticBackend: createR2RSemanticBackend({
+      baseUrl: "https://r2r.example.com",
+      collectionId: tenant.wikiCollectionId,
+      namespace: `tenant-${tenant.id}`,
+      apiKey: process.env.R2R_API_KEY,
+    }),
+  });
+}
+```
+
+Static options are copied, validated, and detached from the environment when
+the adapter is created. A shared adapter can instead receive a synchronous or
+asynchronous resolver:
+
+```ts
+const backend = createR2RSemanticBackend(async ({ root }) => {
+  const binding = await trustedBindingStore.findByWikiRoot(root);
+  if (!binding) throw new Error("Unknown wiki root");
+  return {
+    baseUrl: binding.baseUrl,
+    collectionId: binding.collectionId,
+    namespace: binding.namespace,
+    accessToken: binding.accessToken,
+  };
+});
+
+const first = createWiki({ root: "/data/tenant-a", semanticBackend: backend });
+const second = createWiki({ root: "/data/tenant-b", semanticBackend: backend });
+await Promise.all([first.getContextPack({ prompt: "plan" }), second.getContextPack({ prompt: "plan" })]);
+```
+
+The resolver receives the normalized absolute root and its result is validated
+for every load or sync. Configuration is never stored in global mutable state;
+each reader retains its own immutable R2R snapshot and query cache. Resolver
+errors fail through the same bounded backend error policy as network failures.
+The resolver may be invoked concurrently and llmwiki deliberately does not
+cache bindings indefinitely: the host can apply an authorization-aware,
+bounded-TTL cache if its configuration store needs one, while still allowing
+credential rotation and tenant revocation to take effect.
+
+Collection provisioning remains an application responsibility. A generic
+library cannot safely infer a tenant, authorization policy, retention policy,
+or collection lifecycle. Keep that mapping in the host's trusted configuration
+or storage layer and return it from the resolver; no host database dependency
+belongs in llmwiki.
+
+For the strongest tenant boundary, provision a dedicated collection and a
+unique namespace per wiki. Sharing one collection across tenants is technically
+supported because every llmwiki query also filters by namespace, but R2R access
+control remains collection-scoped. A shared collection therefore reduces ACL
+isolation and increases the impact of an operator or non-llmwiki client omitting
+the metadata filter. Prefer a least-privilege R2R credential that can access
+only the intended collection. Resolve bindings only after the host authorizes
+the tenant; never copy a collection ID or namespace directly from untrusted
+request input.
 
 ## Authentication and projects
 
@@ -174,12 +246,15 @@ provider guards, pending-index reconciliation, and SDK code depend on the
 backend-neutral `SemanticBackend` contract and capability flags; only the R2R
 adapter imports R2R configuration, manifests, response types, or HTTP code.
 
-SDK hosts can select a built-in per Wiki instance without changing process-wide
-environment state:
+SDK hosts can scope built-in selection to one Wiki instance:
 
 ```ts
 const wiki = createWiki({ root: "./my-wiki", semanticBackend: "r2r" });
 ```
+
+The string selects the environment-configured adapter; it does not make R2R
+connection settings tenant-local. Use `createR2RSemanticBackend` for isolated
+per-Wiki or resolver-backed connection settings.
 
 They can also pass an object implementing the exported, experimental
 `SemanticBackend` interface. Overrides are isolated with `AsyncLocalStorage`, so

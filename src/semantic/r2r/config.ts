@@ -1,28 +1,110 @@
 /**
  * @file src/semantic/r2r/config.ts
- * @description Environment-only validation for the optional R2R semantic
- * backend. Selection remains backend-neutral in the parent semantic module;
- * this file owns only R2R connection, authentication, and search settings.
+ * @description Canonical validation for environment-selected and explicitly
+ * configured R2R semantic backends. Explicit options are hermetic: they never
+ * inherit R2R credentials or routing from process.env, which lets concurrent
+ * SDK Wiki instances bind different tenants without shared mutable state.
  */
 
 /** R2R search presets supported by the v3 retrieval endpoint. */
 export type R2RSearchMode = "basic" | "advanced" | "custom";
 
-/** Fully validated R2R connection and indexing configuration. */
+/** Public explicit configuration accepted by createR2RSemanticBackend. */
+export interface R2RSemanticBackendOptions {
+  /** R2R server URL before `/v3`; defaults to `http://localhost:7272`. */
+  readonly baseUrl?: string;
+  /** UUID of the pre-provisioned collection that owns this wiki's documents. */
+  readonly collectionId: string;
+  /** Stable lowercase partition key unique to this wiki inside the collection. */
+  readonly namespace: string;
+  /** R2R retrieval preset; defaults to `basic`. */
+  readonly searchMode?: R2RSearchMode;
+  /** Per-request timeout in milliseconds. */
+  readonly timeoutMs?: number;
+  /** Maximum concurrent document ingestions/deletions. */
+  readonly ingestConcurrency?: number;
+  /** Interval between full local reconciliation audits in milliseconds. */
+  readonly fullSyncIntervalMs?: number;
+  /** Retry count for transient transport and server failures. */
+  readonly maxRetries?: number;
+  /** Initial exponential retry delay in milliseconds. */
+  readonly retryBaseDelayMs?: number;
+  /** API key sent as `x-api-key`; mutually exclusive with accessToken. */
+  readonly apiKey?: string;
+  /** Bearer token; mutually exclusive with apiKey. */
+  readonly accessToken?: string;
+  /** Optional R2R project routed through `x-project-name`. */
+  readonly projectName?: string;
+  /** Explicitly permit a non-loopback plaintext HTTP endpoint. */
+  readonly allowInsecureHttp?: boolean;
+}
+
+/** Trusted host context supplied when resolving one wiki's R2R binding. */
+export interface R2RSemanticBackendContext {
+  /** Normalized project root; a routing key, not proof of tenant authorization. */
+  readonly root: string;
+}
+
+/** Resolve an already-authorized tenant/wiki binding without global mutation. */
+export type R2RSemanticBackendResolver = (
+  context: R2RSemanticBackendContext,
+) => R2RSemanticBackendOptions | Promise<R2RSemanticBackendOptions>;
+
+/** Fully validated internal R2R connection and indexing configuration. */
 export interface R2RConfig {
+  readonly baseUrl: string;
+  readonly collectionId: string;
+  readonly namespace: string;
+  readonly searchMode: R2RSearchMode;
+  readonly timeoutMs: number;
+  readonly concurrency: number;
+  readonly fullSyncIntervalMs: number;
+  readonly maxRetries: number;
+  readonly retryBaseDelayMs: number;
+  readonly apiKey?: string;
+  readonly accessToken?: string;
+  readonly projectName?: string;
+}
+
+interface RawR2RConfig {
+  baseUrl?: unknown;
+  collectionId?: unknown;
+  namespace?: unknown;
+  searchMode?: unknown;
+  timeoutMs?: unknown;
+  concurrency?: unknown;
+  fullSyncIntervalMs?: unknown;
+  maxRetries?: unknown;
+  retryBaseDelayMs?: unknown;
+  apiKey?: unknown;
+  accessToken?: unknown;
+  projectName?: unknown;
+  allowInsecureHttp?: unknown;
+}
+
+interface R2RConfigLabels {
   baseUrl: string;
   collectionId: string;
   namespace: string;
-  searchMode: R2RSearchMode;
-  timeoutMs: number;
-  concurrency: number;
-  fullSyncIntervalMs: number;
-  maxRetries: number;
-  retryBaseDelayMs: number;
-  apiKey?: string;
-  accessToken?: string;
-  projectName?: string;
+  searchMode: string;
+  timeoutMs: string;
+  concurrency: string;
+  fullSyncIntervalMs: string;
+  maxRetries: string;
+  retryBaseDelayMs: string;
+  apiKey: string;
+  accessToken: string;
+  projectName: string;
+  allowInsecureHttp: string;
 }
+
+const OPTION_NUMBER_KEYS = [
+  "timeoutMs",
+  "ingestConcurrency",
+  "fullSyncIntervalMs",
+  "maxRetries",
+  "retryBaseDelayMs",
+] as const;
 
 export const R2R_BASE_URL_ENV = "R2R_BASE_URL";
 export const R2R_COLLECTION_ID_ENV = "R2R_COLLECTION_ID";
@@ -48,134 +130,243 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const SEARCH_MODES = new Set<R2RSearchMode>(["basic", "advanced", "custom"]);
 
-/** Resolve and validate every setting needed by the R2R v3 REST adapter. */
+const ENV_LABELS: R2RConfigLabels = {
+  baseUrl: R2R_BASE_URL_ENV,
+  collectionId: R2R_COLLECTION_ID_ENV,
+  namespace: R2R_NAMESPACE_ENV,
+  searchMode: R2R_SEARCH_MODE_ENV,
+  timeoutMs: R2R_TIMEOUT_ENV,
+  concurrency: R2R_CONCURRENCY_ENV,
+  fullSyncIntervalMs: R2R_FULL_SYNC_INTERVAL_ENV,
+  maxRetries: R2R_MAX_RETRIES_ENV,
+  retryBaseDelayMs: R2R_RETRY_BASE_DELAY_ENV,
+  apiKey: "R2R_API_KEY",
+  accessToken: "R2R_ACCESS_TOKEN",
+  projectName: "R2R_PROJECT_NAME",
+  allowInsecureHttp: R2R_ALLOW_HTTP_ENV,
+};
+
+const OPTION_LABELS: R2RConfigLabels = {
+  baseUrl: "baseUrl",
+  collectionId: "collectionId",
+  namespace: "namespace",
+  searchMode: "searchMode",
+  timeoutMs: "timeoutMs",
+  concurrency: "ingestConcurrency",
+  fullSyncIntervalMs: "fullSyncIntervalMs",
+  maxRetries: "maxRetries",
+  retryBaseDelayMs: "retryBaseDelayMs",
+  apiKey: "apiKey",
+  accessToken: "accessToken",
+  projectName: "projectName",
+  allowInsecureHttp: "allowInsecureHttp",
+};
+
+/** Resolve and validate R2R settings from the process environment. */
 export function resolveR2RConfig(env: NodeJS.ProcessEnv = process.env): R2RConfig {
-  const collectionId = requiredUuid(env[R2R_COLLECTION_ID_ENV], R2R_COLLECTION_ID_ENV);
-  const namespace = requiredNamespace(env[R2R_NAMESPACE_ENV]);
-  const apiKey = optionalValue(env.R2R_API_KEY);
-  const accessToken = optionalValue(env.R2R_ACCESS_TOKEN);
-  const projectName = optionalValue(env.R2R_PROJECT_NAME);
-  if (apiKey && accessToken) throw new Error("Set only one of R2R_API_KEY and R2R_ACCESS_TOKEN.");
-  return {
-    baseUrl: resolveBaseUrl(env),
-    collectionId,
-    namespace,
-    searchMode: resolveSearchMode(env[R2R_SEARCH_MODE_ENV]),
-    timeoutMs: positiveInteger(env[R2R_TIMEOUT_ENV], DEFAULT_R2R_TIMEOUT_MS, R2R_TIMEOUT_ENV),
-    concurrency: boundedConcurrency(env[R2R_CONCURRENCY_ENV]),
+  return normalizeR2RConfig({
+    baseUrl: env[R2R_BASE_URL_ENV],
+    collectionId: env[R2R_COLLECTION_ID_ENV],
+    namespace: env[R2R_NAMESPACE_ENV],
+    searchMode: env[R2R_SEARCH_MODE_ENV],
+    timeoutMs: env[R2R_TIMEOUT_ENV],
+    concurrency: env[R2R_CONCURRENCY_ENV],
+    fullSyncIntervalMs: env[R2R_FULL_SYNC_INTERVAL_ENV],
+    maxRetries: env[R2R_MAX_RETRIES_ENV],
+    retryBaseDelayMs: env[R2R_RETRY_BASE_DELAY_ENV],
+    apiKey: env.R2R_API_KEY,
+    accessToken: env.R2R_ACCESS_TOKEN,
+    projectName: env.R2R_PROJECT_NAME,
+    allowInsecureHttp: enabled(env[R2R_ALLOW_HTTP_ENV]),
+  }, ENV_LABELS);
+}
+
+/** Validate one explicit, environment-independent SDK configuration snapshot. */
+export function resolveR2RConfigOptions(options: R2RSemanticBackendOptions): R2RConfig {
+  if (!isRecord(options)) throw new TypeError("R2R semantic backend options must be an object.");
+  assertExplicitNumberTypes(options);
+  return normalizeR2RConfig({
+    baseUrl: options.baseUrl,
+    collectionId: options.collectionId,
+    namespace: options.namespace,
+    searchMode: options.searchMode,
+    timeoutMs: options.timeoutMs,
+    concurrency: options.ingestConcurrency,
+    fullSyncIntervalMs: options.fullSyncIntervalMs,
+    maxRetries: options.maxRetries,
+    retryBaseDelayMs: options.retryBaseDelayMs,
+    apiKey: options.apiKey,
+    accessToken: options.accessToken,
+    projectName: options.projectName,
+    allowInsecureHttp: options.allowInsecureHttp,
+  }, OPTION_LABELS);
+}
+
+/** Normalize one trusted-source snapshot without reading mutable global state. */
+function normalizeR2RConfig(raw: RawR2RConfig, labels: R2RConfigLabels): R2RConfig {
+  const apiKey = optionalString(raw.apiKey, labels.apiKey);
+  const accessToken = optionalString(raw.accessToken, labels.accessToken);
+  const projectName = optionalString(raw.projectName, labels.projectName);
+  assertUnambiguousAuth(apiKey, accessToken, labels);
+  return Object.freeze({
+    baseUrl: resolveBaseUrl(raw.baseUrl, raw.allowInsecureHttp, labels),
+    collectionId: requiredUuid(raw.collectionId, labels.collectionId),
+    namespace: requiredNamespace(raw.namespace, labels.namespace),
+    searchMode: resolveSearchMode(raw.searchMode, labels.searchMode),
+    timeoutMs: positiveInteger(raw.timeoutMs, DEFAULT_R2R_TIMEOUT_MS, labels.timeoutMs),
+    concurrency: boundedConcurrency(raw.concurrency, labels.concurrency),
     fullSyncIntervalMs: positiveInteger(
-      env[R2R_FULL_SYNC_INTERVAL_ENV],
+      raw.fullSyncIntervalMs,
       DEFAULT_R2R_FULL_SYNC_INTERVAL_MS,
-      R2R_FULL_SYNC_INTERVAL_ENV,
+      labels.fullSyncIntervalMs,
     ),
     maxRetries: boundedNonNegativeInteger(
-      env[R2R_MAX_RETRIES_ENV],
+      raw.maxRetries,
       DEFAULT_R2R_MAX_RETRIES,
       MAX_R2R_RETRIES,
-      R2R_MAX_RETRIES_ENV,
+      labels.maxRetries,
     ),
     retryBaseDelayMs: Math.min(
-      positiveInteger(env[R2R_RETRY_BASE_DELAY_ENV], DEFAULT_R2R_RETRY_BASE_DELAY_MS, R2R_RETRY_BASE_DELAY_ENV),
+      positiveInteger(raw.retryBaseDelayMs, DEFAULT_R2R_RETRY_BASE_DELAY_MS, labels.retryBaseDelayMs),
       MAX_R2R_RETRY_BASE_DELAY_MS,
     ),
     ...(apiKey && { apiKey }),
     ...(accessToken && { accessToken }),
     ...(projectName && { projectName }),
-  };
+  });
+}
+
+/** Reject numeric strings at the JavaScript SDK boundary while env stays string-based. */
+function assertExplicitNumberTypes(options: Record<string, unknown>): void {
+  for (const key of OPTION_NUMBER_KEYS) {
+    const value = options[key];
+    if (value !== undefined && typeof value !== "number") {
+      throw new TypeError(`${key} must be a number.`);
+    }
+  }
+}
+
+/** Refuse two credentials because header precedence would otherwise be ambiguous. */
+function assertUnambiguousAuth(
+  apiKey: string | undefined,
+  accessToken: string | undefined,
+  labels: R2RConfigLabels,
+): void {
+  if (apiKey && accessToken) {
+    throw new Error(`Set only one of ${labels.apiKey} and ${labels.accessToken}.`);
+  }
 }
 
 /** Require a stable tenant key so shared collections cannot mix wiki results. */
-function requiredNamespace(raw: string | undefined): string {
-  const value = optionalValue(raw)?.toLowerCase();
+function requiredNamespace(raw: unknown, name: string): string {
+  const value = optionalString(raw, name)?.toLowerCase();
   if (!value || !NAMESPACE_PATTERN.test(value)) {
-    throw new Error(`${R2R_NAMESPACE_ENV} must match ${NAMESPACE_PATTERN}.`);
+    throw new Error(`${name} must match ${NAMESPACE_PATTERN}.`);
   }
   return value;
 }
 
-/** Parse and secure the configured R2R origin, preserving an optional path prefix. */
-function resolveBaseUrl(env: NodeJS.ProcessEnv): string {
-  const raw = optionalValue(env[R2R_BASE_URL_ENV]) ?? DEFAULT_R2R_BASE_URL;
-  const url = parseBaseUrl(raw);
-  assertBaseUrlSecurity(url, env);
+/** Parse and secure the configured R2R origin, preserving a path prefix. */
+function resolveBaseUrl(raw: unknown, allowHttp: unknown, labels: R2RConfigLabels): string {
+  const value = optionalString(raw, labels.baseUrl) ?? DEFAULT_R2R_BASE_URL;
+  const url = parseBaseUrl(value, labels.baseUrl);
+  assertBaseUrlSecurity(url, requiredBoolean(allowHttp, labels.allowInsecureHttp), labels);
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");
 }
 
 /** Parse an absolute HTTP(S) URL without retaining a failed partial value. */
-function parseBaseUrl(raw: string): URL {
+function parseBaseUrl(raw: string, name: string): URL {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`${R2R_BASE_URL_ENV} must be an absolute HTTP(S) URL.`);
+    throw new Error(`${name} must be an absolute HTTP(S) URL.`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`${R2R_BASE_URL_ENV} must use http: or https:.`);
+    throw new Error(`${name} must use http: or https:.`);
   }
   return url;
 }
 
 /** Reject credential-bearing URLs and unsafe remote plaintext transport. */
-function assertBaseUrlSecurity(url: URL, env: NodeJS.ProcessEnv): void {
-  if (url.username || url.password) throw new Error(`${R2R_BASE_URL_ENV} must not contain credentials.`);
-  if (url.protocol === "http:" && !isLoopback(url.hostname) && !enabled(env[R2R_ALLOW_HTTP_ENV])) {
-    throw new Error(`Refusing non-local HTTP R2R endpoint; use HTTPS or set ${R2R_ALLOW_HTTP_ENV}=1.`);
+function assertBaseUrlSecurity(url: URL, allowHttp: boolean, labels: R2RConfigLabels): void {
+  if (url.username || url.password) throw new Error(`${labels.baseUrl} must not contain credentials.`);
+  if (url.protocol === "http:" && !isLoopback(url.hostname) && !allowHttp) {
+    throw new Error(`Refusing non-local HTTP R2R endpoint; use HTTPS or enable ${labels.allowInsecureHttp}.`);
   }
 }
 
 /** Resolve one of R2R's three documented search presets. */
-function resolveSearchMode(raw: string | undefined): R2RSearchMode {
-  const mode = (optionalValue(raw)?.toLowerCase() ?? "basic") as R2RSearchMode;
+function resolveSearchMode(raw: unknown, name: string): R2RSearchMode {
+  const mode = (optionalString(raw, name)?.toLowerCase() ?? "basic") as R2RSearchMode;
   if (!SEARCH_MODES.has(mode)) {
-    throw new Error(`${R2R_SEARCH_MODE_ENV} must be "basic", "advanced", or "custom".`);
+    throw new Error(`${name} must be "basic", "advanced", or "custom".`);
   }
   return mode;
 }
 
 /** Require an RFC-4122 UUID suitable for R2R document/collection fields. */
-function requiredUuid(raw: string | undefined, name: string): string {
-  const value = optionalValue(raw);
+function requiredUuid(raw: unknown, name: string): string {
+  const value = optionalString(raw, name);
   if (!value || !UUID_PATTERN.test(value)) throw new Error(`${name} must be a valid UUID.`);
   return value.toLowerCase();
 }
 
 /** Parse a positive integer or use the supplied default when unset. */
-function positiveInteger(raw: string | undefined, fallback: number, name: string): number {
-  const value = optionalValue(raw);
-  if (!value) return fallback;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer.`);
+function positiveInteger(raw: unknown, fallback: number, name: string): number {
+  const parsed = optionalNumber(raw, name);
+  if (parsed === undefined) return fallback;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
   return parsed;
 }
 
 /** Resolve bounded ingestion concurrency so one client cannot flood R2R. */
-function boundedConcurrency(raw: string | undefined): number {
-  return Math.min(
-    positiveInteger(raw, DEFAULT_R2R_CONCURRENCY, R2R_CONCURRENCY_ENV),
-    MAX_R2R_CONCURRENCY,
-  );
+function boundedConcurrency(raw: unknown, name: string): number {
+  return Math.min(positiveInteger(raw, DEFAULT_R2R_CONCURRENCY, name), MAX_R2R_CONCURRENCY);
 }
 
 /** Parse a non-negative integer under a hard operational cap. */
 function boundedNonNegativeInteger(
-  raw: string | undefined,
+  raw: unknown,
   fallback: number,
   maximum: number,
   name: string,
 ): number {
-  const value = optionalValue(raw);
-  if (!value) return fallback;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${name} must be a non-negative integer.`);
+  const parsed = optionalNumber(raw, name);
+  if (parsed === undefined) return fallback;
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative integer.`);
+  }
   return Math.min(parsed, maximum);
 }
 
-/** Trim optional configuration and collapse blank strings to absent. */
-function optionalValue(raw: string | undefined): string | undefined {
-  const value = raw?.trim();
-  return value ? value : undefined;
+/** Parse an environment string or explicit numeric option without coercing objects. */
+function optionalNumber(raw: unknown, name: string): number | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw === "string" && !raw.trim()) return undefined;
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    throw new TypeError(`${name} must be a number.`);
+  }
+  return Number(raw);
+}
+
+/** Trim one optional string and reject wrong JavaScript runtime types. */
+function optionalString(raw: unknown, name: string): string | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string") throw new TypeError(`${name} must be a string.`);
+  const value = raw.trim();
+  return value || undefined;
+}
+
+/** Require an explicit boolean after environment parsing has completed. */
+function requiredBoolean(raw: unknown, name: string): boolean {
+  if (raw === undefined) return false;
+  if (typeof raw !== "boolean") throw new TypeError(`${name} must be a boolean.`);
+  return raw;
 }
 
 /** Interpret the conventional affirmative spellings used by strict mode too. */
@@ -186,4 +377,9 @@ function enabled(raw: string | undefined): boolean {
 /** True for loopback hosts where plain HTTP cannot expose a credential remotely. */
 function isLoopback(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+/** Plain-object guard for the JavaScript-facing explicit options boundary. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
