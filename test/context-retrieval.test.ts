@@ -25,6 +25,7 @@ import { retrieveSemanticChunks } from "../src/context/retrieval.js";
 
 const mockedLoad = loadEmbeddingsForContext as unknown as Mock;
 const mockedFindChunks = findRelevantChunksV3 as unknown as Mock;
+const CONTENT_HASH = "a".repeat(64);
 
 afterEach(() => {
   mockedLoad.mockReset();
@@ -49,8 +50,8 @@ describe("retrieveSemanticChunks — degrade and credential branches", () => {
     expect(mockedFindChunks).not.toHaveBeenCalled();
   });
 
-  it("returns embedding-store-missing when the load reports no index", async () => {
-    mockedLoad.mockResolvedValueOnce(degraded("embedding-store-missing"));
+  it("returns embedding-store-missing when the load reports an unusable index", async () => {
+    mockedLoad.mockResolvedValueOnce(degraded("embedding-store-unavailable"));
     const outcome = await retrieveSemanticChunks("/tmp/proj", "any", 8);
     expect(outcome.warning).toBe("embedding-store-missing");
     expect(mockedFindChunks).not.toHaveBeenCalled();
@@ -84,13 +85,13 @@ describe("retrieveSemanticChunks — happy path", () => {
   it("maps v3 chunk hits into the slim SemanticChunkHit shape (carrying pageId)", async () => {
     mockedLoad.mockResolvedValueOnce(v3Outcome());
     mockedFindChunks.mockResolvedValueOnce({
-      hits: [{ pageId: "concepts/alpha", slug: "alpha", chunkIndex: 0, contentHash: "h-alpha-0", text: "alpha chunk", score: 0.81 }],
+      hits: [{ pageId: "concepts/alpha", slug: "alpha", chunkIndex: 0, contentHash: CONTENT_HASH, text: "alpha chunk", score: 0.81 }],
       stalePageIds: [],
     });
     const outcome = await retrieveSemanticChunks("/tmp/proj", "any", 8);
     expect(outcome.warning).toBeNull();
     expect(outcome.hits).toEqual([
-      { pageId: "concepts/alpha", slug: "alpha", text: "alpha chunk", score: 0.81, contentHash: "h-alpha-0" },
+      { pageId: "concepts/alpha", slug: "alpha", text: "alpha chunk", score: 0.81, contentHash: CONTENT_HASH },
     ]);
   });
 
@@ -103,7 +104,7 @@ describe("retrieveSemanticChunks — happy path", () => {
 });
 
 describe("retrieveSemanticChunks — embedding-entry-stale surfacing (context)", () => {
-  const hit = { pageId: "concepts/alpha", slug: "alpha", chunkIndex: 0, contentHash: "h", text: "t", score: 0.8 };
+  const hit = { pageId: "concepts/alpha", slug: "alpha", chunkIndex: 0, contentHash: CONTENT_HASH, text: "t", score: 0.8 };
 
   it("flags staleEntriesDetected when the chunk pipeline reports stale entries alongside hits", async () => {
     mockedLoad.mockResolvedValueOnce(v3Outcome());

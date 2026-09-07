@@ -72,7 +72,7 @@ llmwiki calls an LLM during the compile and query phases. It does **not** requir
 
     **Notes:**
     - Compile and structured extraction work off the local login with no extra credentials.
-    - `llmwiki query` uses semantic embeddings, which the Claude Agent SDK does not provide. Set `VOYAGE_API_KEY` to enable embeddings; otherwise `query` falls back to lexical ranking.
+    - `llmwiki query` uses semantic retrieval, which the Claude Agent SDK does not provide. Set `VOYAGE_API_KEY`, choose another local embedding provider, or select R2R; otherwise `query` falls back to live-page selection.
     - Set `LLMWIKI_DEBUG=1` for a concise per-message trace, or `LLMWIKI_DEBUG=verbose` for the SDK's full verbose logging.
 
     <Warning>
@@ -143,7 +143,9 @@ llmwiki calls an LLM during the compile and query phases. It does **not** requir
     Available models (use dots, not dashes in names): `gpt-4o`, `gpt-4o-mini`, `claude-sonnet-4.5`, `claude-sonnet-4.6`, `claude-opus-4.5`, `gemini-2.5-pro`, and others - availability depends on your Copilot plan.
 
     <Note>
-      The GitHub Copilot API does not expose an embeddings endpoint. `llmwiki query` will fall back to full-index lexical selection without semantic ranking. For embedding-dependent workflows, switch to the `openai` provider and supply `OPENAI_API_KEY`.
+      The GitHub Copilot API does not expose an embeddings endpoint. For
+      semantic retrieval, configure a separate local embedding provider or
+      select the optional R2R semantic backend.
     </Note>
   </Tab>
 </Tabs>
@@ -164,6 +166,22 @@ A self-hosted endpoint needs no API key. Without `OPENAI_EMBEDDINGS_BASE_URL`, y
 Switching an existing project to a different embedding backend re-embeds every page on the next `llmwiki compile`, because vectors from different backends are not comparable.
 
 See [Environment Variables](/configuration/environment-variables) for the full `LLMWIKI_EMBEDDING_PROVIDER` credential reference.
+
+### External R2R semantic backend
+
+For larger corpora, you can move vector storage and lookup out of
+`.llmwiki/embeddings.json` into R2R:
+
+```bash
+export LLMWIKI_SEMANTIC_BACKEND=r2r
+export R2R_BASE_URL=http://localhost:7272
+export R2R_NAMESPACE=<stable-wiki-id>
+```
+
+R2R embeds and indexes the page chunks in the authenticated user's default
+collection in this mode. See
+[Semantic Backends](/configuration/semantic-backends) before enabling it,
+especially if the service is remote or the wiki contains confidential data.
 
 ## Overriding the Model
 

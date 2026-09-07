@@ -306,7 +306,7 @@ async function addApprovedSlugToSourceState(
   });
 }
 
-/** Refresh interlinks, index, MOC, and embeddings after writing a candidate. */
+/** Refresh interlinks, index, MOC, and semantic retrieval after approval. */
 async function refreshWikiAfterApproval(root: string, candidate: ReviewCandidate): Promise<void> {
   const { slug } = candidate;
   // approveUnderLock runs under the held project lock (runReviewUnderLock), so
@@ -329,13 +329,13 @@ function candidatePageId(candidate: ReviewCandidate): PageId {
 }
 
 /**
- * Refresh the embeddings store without failing approval, DRAINING the durable
+ * Refresh the selected semantic index without failing approval, DRAINING the durable
  * pending marker in the same pass.
  *
  * Routes through the SHARED {@link refreshEmbeddingsDrainingPending} so approving
  * a candidate also retries any page-ids a prior `compile --review` (or a
  * swallowed/crashed refresh) left pending — a review-only workflow would
- * otherwise accumulate pending ids that are never drained, leaving embeddings
+ * otherwise accumulate pending ids that are never drained, leaving retrieval
  * stale indefinitely. The shared drain settles the marker per-id and is
  * non-fatal on a missing API key / transient provider error. Approval already
  * holds the review lock (runReviewUnderLock), so the lock-free Core is correct

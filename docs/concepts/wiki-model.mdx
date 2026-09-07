@@ -1,7 +1,7 @@
 ---
 title: "llmwiki Output Model: Wiki, State, and Activity Journal"
 sidebarTitle: "Wiki Model"
-description: "Learn how llmwiki organizes compiled wiki pages, wikilinks, the activity journal, and the .llmwiki directory for embeddings and state."
+description: "Learn how llmwiki organizes compiled wiki pages, wikilinks, the activity journal, and the .llmwiki directory for semantic indexes and state."
 ---
 
 When llmwiki compiles your sources, it writes everything into a predictable, file-system-native layout. The compiled wiki lives in `wiki/`, the compiler's internal state lives in `.llmwiki/`, and every operation - ingest, compile, query - appends a timestamped entry to `log.md`. All of these are plain text or JSON files you can read, version-control, and open in any tool, including Obsidian.
@@ -16,7 +16,8 @@ wiki/
   index.md              auto-generated table of contents
 .llmwiki/
   state.json            per-source content hashes and concept ownership
-  embeddings.json       page- and chunk-level embedding vectors
+  embeddings.json       default local page and chunk vectors
+  r2r-index-*.json      optional R2R identities and freshness hashes
   schema.json           optional page-kind and cross-link policy
   config.json           review policy (hold modes and thresholds)
   candidates/           pages held for review
@@ -48,7 +49,10 @@ wiki/
     Tracks per-source SHA-256 content hashes and the concept slugs each source owns. On every compile, llmwiki compares live file hashes against this state to determine what needs reprocessing. This is what makes incremental compilation possible.
   </Card>
   <Card title="embeddings.json" icon="vector-square">
-    The v3 embedding store. Carries page-level and chunk-level vectors under qualified page ids for `llmwiki query` and `llmwiki context` cosine-similarity retrieval. Updated incrementally alongside source changes - only chunks whose content changed are re-embedded.
+    The default local semantic store. Carries page-level and chunk-level vectors under qualified page ids for `llmwiki query` and `llmwiki context` cosine-similarity retrieval. Updated incrementally alongside source changes - only chunks whose content changed are re-embedded.
+  </Card>
+  <Card title="r2r-index-*.json" icon="server">
+    The optional R2R reconciliation manifest. Carries document IDs and SHA-256 freshness hashes, but no page text or vectors. The endpoint, namespace, project, and optional collection select the filename. See [Semantic Backends](/configuration/semantic-backends).
   </Card>
   <Card title="candidates/" icon="clock">
     JSON records for pages held for review - either via `llmwiki compile --review`, triggered automatically by a review policy in `config.json`, or staged by `llmwiki import --okf`. Each candidate records exactly why it was held (low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF). Rejected candidates move to `candidates/archive/` for audit.

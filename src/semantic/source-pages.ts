@@ -1,7 +1,10 @@
 /**
- * Eligible-live-page assembly for the v3 embedding writer (spec §4.4/§4.5).
+ * @file src/semantic/source-pages.ts
+ * @description Backend-neutral eligible-live-page assembly for semantic
+ * adapters. It centralizes privacy, profile validity, chunking, and freshness
+ * hashes so local embeddings, R2R, and future backends index the same corpus.
  *
- * Produces the `CollectedPage[]` the writer feeds into both the migration
+ * Produces the `SemanticSourcePage[]` adapters feed into both migration
  * ({@link EligibleLivePage}) and the re-embed pass: every page that is live on
  * disk, passes its embedding-eligibility predicate ({@link pageEmbedSurfaces}),
  * and — for typed pages — is profile-VALID. A both-false typed page (neither
@@ -20,19 +23,28 @@
  * so the migration can content-verify a preserved vector without re-reading.
  */
 
-import { collectNamespacedPageRecords, buildEmbeddingText } from "./embeddings-pages.js";
-import { hashChunkText, splitIntoChunks } from "./retrieval.js";
-import { qualifiedPageId, type PageId } from "./page-id.js";
-import { pageEmbedSurfaces } from "./embed-eligibility.js";
+import { collectNamespacedPageRecords, buildEmbeddingText } from "../utils/embeddings-pages.js";
+import { hashChunkText, splitIntoChunks } from "../utils/retrieval.js";
+import { qualifiedPageId, type PageId } from "../utils/page-id.js";
+import { pageEmbedSurfaces } from "../utils/embed-eligibility.js";
 import { collectEntityPages, invalidEntityPagePaths } from "../profile/collect.js";
 import { isDefaultProfile } from "../profile/default.js";
 import type { LoadedProfile } from "../profile/types.js";
-import type { EligibleLivePage } from "./embeddings-migrate.js";
 import type { PageRecord } from "../pages/read.js";
+import { buildNamespaceDirs } from "../utils/page-registry.js";
+import { resolveEligiblePage } from "../utils/page-resolve.js";
 
 /** An eligible live page plus the material the re-embed pass needs. */
-export interface CollectedPage extends EligibleLivePage {
-  /** The page's title — re-embedded into the page vector and stored on records. */
+export interface SemanticSourcePage {
+  /** Qualified page identity shared across every semantic backend. */
+  pageId: PageId;
+  /** Filename-derived slug retained for local store compatibility. */
+  bareSlug: string;
+  /** Hash of the page-level title/summary embedding text. */
+  embeddingTextHash: string;
+  /** Ordered hashes corresponding exactly to `chunkTexts`. */
+  chunkContentHashes: string[];
+  /** The page's title, included in the page-level semantic representation. */
   title: string;
   /** The page's summary — part of the embedding text. */
   summary: string;
@@ -45,7 +57,7 @@ export interface CollectedPage extends EligibleLivePage {
 /**
  * Collect every eligible, valid, live page across reserved + typed namespaces.
  * The result is keyed by qualified `pageId`; a both-false or profile-invalid
- * typed page is omitted entirely (never embedded — S2 privacy).
+ * typed page is omitted entirely (never indexed — S2 privacy).
  *
  * @param root - Project root path.
  * @param profile - The resolved profile (default → only concepts/queries).
@@ -54,15 +66,34 @@ export interface CollectedPage extends EligibleLivePage {
 export async function collectEligibleLivePages(
   root: string,
   profile: LoadedProfile,
-): Promise<CollectedPage[]> {
+): Promise<SemanticSourcePage[]> {
   const reserved = await collectReservedPages(root);
   if (isDefaultProfile(profile.profile)) return reserved;
   const typed = await collectTypedPages(root, profile);
   return [...reserved, ...typed];
 }
 
+/**
+ * Collect only explicitly changed qualified ids through direct confined reads.
+ * Missing or newly ineligible ids are omitted so incremental backends can treat
+ * their prior documents as deletions without scanning the entire corpus.
+ */
+export async function collectEligibleLivePagesById(
+  root: string,
+  pageIds: PageId[],
+  profile: LoadedProfile,
+): Promise<SemanticSourcePage[]> {
+  const namespaceDirs = buildNamespaceDirs(profile.profile);
+  const collected: SemanticSourcePage[] = [];
+  for (const pageId of new Set(pageIds)) {
+    const resolved = await resolveEligiblePage(root, pageId, namespaceDirs, profile);
+    if (resolved) collected.push(toCollectedPage(pageId, resolved.record));
+  }
+  return collected;
+}
+
 /** Collect concept + query pages (both surfaces eligible, legacy gate applies). */
-async function collectReservedPages(root: string): Promise<CollectedPage[]> {
+async function collectReservedPages(root: string): Promise<SemanticSourcePage[]> {
   const tagged = await collectNamespacedPageRecords(root);
   return tagged.map(({ namespace, record }) =>
     toCollectedPage(qualifiedPageId(namespace, record.slug), record),
@@ -70,10 +101,10 @@ async function collectReservedPages(root: string): Promise<CollectedPage[]> {
 }
 
 /** Collect typed entity pages, gated by eligibility + profile validity. */
-async function collectTypedPages(root: string, profile: LoadedProfile): Promise<CollectedPage[]> {
+async function collectTypedPages(root: string, profile: LoadedProfile): Promise<SemanticSourcePage[]> {
   const { pages, problems } = await collectEntityPages(root, profile.profile);
   const invalidPaths = invalidEntityPagePaths(problems);
-  const out: CollectedPage[] = [];
+  const out: SemanticSourcePage[] = [];
   for (const page of pages) {
     const retrieval = profile.profile.entities[page.entityType]?.retrieval;
     const isProfileInvalid = invalidPaths.has(page.filePath);
@@ -90,8 +121,8 @@ async function collectTypedPages(root: string, profile: LoadedProfile): Promise<
   return out;
 }
 
-/** Build a {@link CollectedPage} from a pageId + record, computing live hashes. */
-function toCollectedPage(pageId: PageId, record: PageRecord): CollectedPage {
+/** Build a {@link SemanticSourcePage} from a pageId and live record. */
+function toCollectedPage(pageId: PageId, record: PageRecord): SemanticSourcePage {
   const embeddingText = buildEmbeddingText(record);
   const chunkTexts = splitIntoChunks(record.body);
   return {

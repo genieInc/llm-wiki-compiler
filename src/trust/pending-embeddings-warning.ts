@@ -31,8 +31,8 @@ export const PENDING_EMBEDDINGS_UNAVAILABLE_CODE = "embeddings-refresh-unavailab
 /** Human-readable copy for the pending-embeddings warning, naming the count. */
 function pendingMessage(count: number): string {
   return (
-    `${count} page(s) awaiting embedding refresh — configure an embedding provider ` +
-    "and re-run `llmwiki compile` to refresh semantic search."
+    `${count} page(s) awaiting semantic index refresh — configure the selected backend ` +
+    "and re-run `llmwiki compile`."
   );
 }
 

@@ -1,4 +1,4 @@
-/** @file Post-write refresh for trusted OKF imports (links, index, MOC, embeddings). */
+/** @file Post-write refresh for trusted OKF imports (links, index, MOC, semantic retrieval). */
 import { resolveAndApplyLinks } from "../compiler/resolver.js";
 import { generateIndex } from "../compiler/indexgen.js";
 import { generateMOC } from "../compiler/obsidian.js";
@@ -8,12 +8,12 @@ import { slugFromPageId, type PageId } from "../utils/page-id.js";
 /**
  * Rebuild derived artifacts after writing imported pages live.
  *
- * The embeddings refresh routes through the SHARED
+ * The semantic refresh routes through the SHARED
  * {@link refreshEmbeddingsDrainingPending} — the same drain compile and
  * `review approve` use — so an OKF import UNIONS the imported page-ids into any
  * prior-pending marker and settles it per-id. Without this, a workflow of OKF
  * imports + refresh that never runs a plain compile would never drain
- * accumulated pending compile-embeddings, leaving them stale indefinitely. The
+ * accumulated pending refreshes, leaving retrieval stale indefinitely. The
  * import already holds the project lock across this call (runOkfImport:
  * acquireLock → writeAll → refreshAfterImport, inside the try, before the
  * finally releaseLock), so the shared drain's lock-free Core is correct (the

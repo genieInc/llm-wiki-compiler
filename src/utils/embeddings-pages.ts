@@ -14,6 +14,7 @@ import { embedTextBatch, enrichEmbedError, makeCountingProvider } from "./embedd
 import { safeRealpath, isInsideDir } from "./path-confine.js";
 import { readConfinedPage } from "./confined-read.js";
 import type { PageRecord } from "../pages/read.js";
+import { isReservedPageEligible } from "./page-eligibility.js";
 
 /** A reserved-namespace page record tagged with the directory it came from. */
 export interface NamespacedPageRecord {
@@ -75,7 +76,7 @@ async function readConfinedPageRecord(expectedDir: string, file: string): Promis
   const content = await readConfinedPage(resolved, expectedDir);
   if (content === null) return null;
   const { meta, body } = parseFrontmatter(content);
-  if (meta.orphaned || typeof meta.title !== "string") return null;
+  if (!isReservedPageEligible(meta)) return null;
   return {
     slug: file.replace(/\.md$/, ""),
     title: meta.title,

@@ -437,8 +437,8 @@ function buildTopLevelWarnings(
     warnings.push({
       code: "embedding-entry-stale",
       message:
-        "Some embedding entries are stale (their page changed or was removed); " +
-        "results stayed fresh by skipping them. Run `llmwiki compile` to rebuild embeddings.",
+        "Some semantic index entries are stale (their page changed or was removed); " +
+        "results stayed fresh by skipping them. Run `llmwiki compile` to rebuild the index.",
     });
   }
   const retrievalWarning = semantic.warning;
@@ -446,15 +446,15 @@ function buildTopLevelWarnings(
     warnings.push({
       code: "embedding-store-missing",
       message:
-        "No usable embedding store found; semantic retrieval skipped. " +
-        "Run `llmwiki compile` to populate embeddings.",
+        "No usable semantic index found; semantic retrieval skipped. " +
+        "Run `llmwiki compile` to populate the selected backend.",
     });
   } else if (retrievalWarning === "embedding-index-outdated") {
     warnings.push({
       code: "embedding-index-outdated",
       message:
-        "The embedding index is an older version; semantic retrieval skipped. " +
-        "Run `llmwiki compile` to rebuild embeddings.",
+        "The selected semantic index is absent or outdated; semantic retrieval skipped. " +
+        "Run `llmwiki compile` to rebuild it.",
     });
   } else if (retrievalWarning === "query-embedding-unavailable") {
     warnings.push({
@@ -462,6 +462,13 @@ function buildTopLevelWarnings(
       message:
         "Could not embed the prompt with the active provider; " +
         "semantic retrieval skipped, lexical signals still applied.",
+    });
+  } else if (retrievalWarning === "semantic-backend-unavailable") {
+    warnings.push({
+      code: "semantic-backend-unavailable",
+      message:
+        "The configured semantic backend is unavailable; " +
+        "lexical signals still applied and remote error details were not exposed.",
     });
   } else if (retrievalWarning === "semantic-retrieval-error") {
     warnings.push({
@@ -490,7 +497,7 @@ interface ContextActionInput {
 /** Context-specific suffix: rebuild embeddings when pages exist but no store is usable. */
 const CONTEXT_COMPILE_ACTION: RecommendedAction = {
   command: "llmwiki compile",
-  reason: "Refresh compiled pages and rebuild the embedding store for semantic context.",
+  reason: "Refresh compiled pages and rebuild the selected semantic index for context.",
   executable: { binary: "llmwiki", args: ["compile"] },
 };
 

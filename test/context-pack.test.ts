@@ -408,6 +408,15 @@ describe("buildContextPack — Slice 2 semantic retrieval integration", () => {
     expect(pack.warnings.map((w) => w.code)).toContain("query-embedding-unavailable");
   });
 
+  it("emits semantic-backend-unavailable when R2R retrieval is unavailable", async () => {
+    mockedRetrieve.mockResolvedValueOnce({
+      hits: [],
+      warning: "semantic-backend-unavailable",
+    });
+    const pack = await buildContextPack({ root: tmpDir, prompt: "anything" });
+    expect(pack.warnings.map((warning) => warning.code)).toContain("semantic-backend-unavailable");
+  });
+
   it("still ranks lexically when the warning fires (no crash, primary populated by other signals)", async () => {
     await writePage(path.join(tmpDir, CONCEPTS_DIR), "alpha", "Alpha");
     mockedRetrieve.mockResolvedValueOnce({

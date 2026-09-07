@@ -49,6 +49,7 @@ type NeighborReason = "wikilink" | "relation";
 type ContextWarningCode =
   | "embedding-store-missing"
   | "query-embedding-unavailable"
+  | "semantic-backend-unavailable"
   | "semantic-retrieval-error"
   | "lint-errors"
   | "pending-candidates"

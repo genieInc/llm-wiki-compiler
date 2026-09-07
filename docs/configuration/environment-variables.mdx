@@ -1,7 +1,7 @@
 ---
 title: "llmwiki Environment Variables: Full Reference Guide"
 sidebarTitle: "Environment Variables"
-description: "Complete reference for all llmwiki environment variables: provider selection, API keys, model overrides, timeouts, output language, and debug flags."
+description: "Complete reference for all llmwiki environment variables: provider and semantic backend selection, API keys, model overrides, timeouts, output language, and debug flags."
 ---
 
 llmwiki reads configuration from environment variables and an optional `.env` file placed in your project directory (alongside `sources/` and `wiki/`). Variables set in your shell take precedence over those in `.env`, which in turn take precedence over the Claude Code settings fallback (`~/.claude/settings.json` → `env` block) and built-in defaults.
@@ -19,7 +19,13 @@ You don't need to set everything - only the variables relevant to your chosen pr
 | `LLMWIKI_EMBEDDING_PROVIDER` | Active chat provider | Backend serving embeddings, independent of `LLMWIKI_PROVIDER`. One of `anthropic`, `claude-agent`, `openai`, `ollama` |
 | `LLMWIKI_EMBEDDING_MODEL` | Provider default | Embedding model to use. Applies only when the effective embedding provider is `openai` or `ollama` - ignored for `anthropic` and `claude-agent`, even when `LLMWIKI_EMBEDDING_PROVIDER` names one of them explicitly |
 
-When you set `LLMWIKI_EMBEDDING_PROVIDER`, the named provider's own credential is required: `VOYAGE_API_KEY` for `anthropic` or `claude-agent`, `OPENAI_API_KEY` (or `OPENAI_EMBEDDINGS_API_KEY`) for `openai`, and no key for `ollama`. Setting `OPENAI_EMBEDDINGS_BASE_URL` marks a self-hosted OpenAI-compatible endpoint that needs no key, so `OPENAI_API_KEY` is not required in that case. This check only runs when `LLMWIKI_EMBEDDING_PROVIDER` is set - leaving it unset keeps today's behavior unchanged.
+When the local semantic backend is active and you set
+`LLMWIKI_EMBEDDING_PROVIDER`, the named provider's own credential is required:
+`VOYAGE_API_KEY` for `anthropic` or `claude-agent`, `OPENAI_API_KEY` (or
+`OPENAI_EMBEDDINGS_API_KEY`) for `openai`, and no key for `ollama`. Setting
+`OPENAI_EMBEDDINGS_BASE_URL` marks a self-hosted OpenAI-compatible endpoint that
+needs no key, so `OPENAI_API_KEY` is not required in that case. This check does
+not run when `LLMWIKI_SEMANTIC_BACKEND=r2r`, because R2R owns vector generation.
 
 The check runs at startup, before any compile or query work begins, so a misspelled provider name or a missing key fails immediately instead of part-way through a run.
 
@@ -65,7 +71,6 @@ Either `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` satisfies authentication - 
 <Note>
   Reasoning models reject `max_tokens` outright — the request fails with `Unsupported parameter: 'max_tokens' is not supported with this model`. llmwiki picks the right field from the model id, so `LLMWIKI_OPENAI_TOKEN_PARAM` is only needed when the id itself does not reveal the model family, which is common behind OpenAI-compatible gateways.
 </Note>
-
 ---
 
 ## Ollama
@@ -93,9 +98,48 @@ Either `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` satisfies authentication - 
 
 ---
 
+## Semantic index backend
+
+The local `.llmwiki/embeddings.json` index remains the default. Select R2R
+explicitly when you want an external vector database and indexed retrieval.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LLMWIKI_SEMANTIC_BACKEND` | `local` | Semantic index implementation. One of `local` or `r2r` |
+| `R2R_BASE_URL` | `http://localhost:7272` | R2R server URL before `/v3`. Plain HTTP is accepted only for loopback hosts unless explicitly allowed |
+| `R2R_NAMESPACE` | Required for R2R | Stable lowercase wiki identifier, unique within the R2R endpoint and project |
+| `R2R_API_KEY` | *(unset)* | API key sent as `x-api-key` |
+| `R2R_ACCESS_TOKEN` | *(unset)* | Bearer token. Mutually exclusive with `R2R_API_KEY` |
+| `R2R_PROJECT_NAME` | *(unset)* | Optional R2R project sent as `x-project-name` |
+| `R2R_SEARCH_MODE` | `basic` | R2R retrieval preset: `basic`, `advanced`, or `custom` |
+| `R2R_TIMEOUT_MS` | `600000` | Per-request timeout in milliseconds; must be a positive integer |
+| `R2R_INGEST_CONCURRENCY` | `5` | Concurrent R2R ingest/delete operations; positive values above `50` are capped |
+| `R2R_MAX_RETRIES` | `3` | Retry count for transient R2R failures; non-negative values above `10` are capped |
+| `R2R_RETRY_BASE_DELAY_MS` | `250` | Initial exponential retry delay in milliseconds; values above `10000` are capped |
+| `R2R_FULL_SYNC_INTERVAL_MS` | `86400000` | Interval in milliseconds between full local audits; ordinary refreshes read only changed IDs |
+| `R2R_ALLOW_INSECURE_HTTP` | *(unset)* | Set to `1`, `true`, `yes`, or `on` to permit a non-loopback HTTP endpoint |
+
+When R2R is selected, R2R generates and stores vectors. Local embedding-provider
+settings are not used, but chat-provider credentials are still required for
+commands that generate text. See [Semantic Backends](/configuration/semantic-backends)
+for setup, data exposure, manifest, recovery, and switching behavior.
+
+The environment-backed adapter lets R2R assign documents to the authenticated
+user's default collection. These variables configure one process-wide endpoint,
+namespace, and credential binding. They are suitable for the CLI, a
+tenant-specific child process, or a single-tenant service. An in-process
+multi-tenant SDK host should pass an explicit
+`createR2RSemanticBackend` instance to each Wiki, or use its root-aware async
+resolver; it must not switch tenants by mutating `process.env` concurrently.
+See [Multi-tenant SDK hosts](/configuration/semantic-backends#multi-tenant-sdk-hosts).
+
+---
+
 ## Embeddings
 
-`llmwiki compile` embeds pages and chunks in provider-native batches. Both variables are optional.
+With the default local semantic backend, `llmwiki compile` embeds pages and
+chunks in provider-native batches. `LLMWIKI_EMBED_STRICT` also applies to R2R
+synchronization failures.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -103,7 +147,8 @@ Either `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` satisfies authentication - 
 | `LLMWIKI_EMBED_STRICT` | *(unset)* | When set to `1`, `true`, `yes`, or `on`, an embedding failure during compile exits with a non-zero status instead of warning and continuing. Use it in CI to catch a broken or misconfigured embedding provider |
 
 <Note>
-  Batching changes only how requests are sent, not the on-disk store. Existing `.llmwiki/embeddings.json` files are read and written unchanged.
+  Batch size applies only to the local backend. R2R owns its embedding batches.
+  Selecting R2R leaves an existing `.llmwiki/embeddings.json` file untouched.
 </Note>
 
 ---
@@ -192,6 +237,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # Optional: embeddings for semantic search (anthropic and claude-agent providers)
 # VOYAGE_API_KEY=pa-...
+
+# Optional: use R2R instead of .llmwiki/embeddings.json
+# LLMWIKI_SEMANTIC_BACKEND=r2r
+# R2R_BASE_URL=http://localhost:7272
+# R2R_NAMESPACE=my-team-wiki
 
 # Optional: output language
 # LLMWIKI_OUTPUT_LANG=zh-CN

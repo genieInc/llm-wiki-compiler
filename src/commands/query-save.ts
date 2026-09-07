@@ -1,7 +1,8 @@
 /**
  * @file src/commands/query-save.ts
  * @description The `query --save` write path — persists a generated answer as a
- * `wiki/queries/<slug>.md` page and refreshes the index/embeddings so the answer
+ * `wiki/queries/<slug>.md` page and refreshes navigation plus the selected
+ * semantic index so the answer
  * is immediately retrievable.
  *
  * Split out of `query.ts` to keep that command file within the project size
@@ -12,7 +13,10 @@
 import path from "path";
 import { atomicWrite, slugify, buildFrontmatter } from "../utils/markdown.js";
 import { generateIndex } from "../compiler/indexgen.js";
-import { updateEmbeddingsLockedCore } from "../utils/embeddings.js";
+import {
+  assertSemanticSyncSucceeded,
+  refreshSemanticIndexLockedCore,
+} from "../semantic/index.js";
 import { qualifiedPageId } from "../utils/page-id.js";
 import { handleSafeEmbeddingFailure } from "../utils/embeddings-batch.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
@@ -70,12 +74,16 @@ async function saveQueryPageLocked(root: string, question: string, answer: strin
   // Index the new query so semantic search retrieves it on the next question.
   // maybeSaveQueryPage already holds the project lock, so call the lock-free
   // core. The saved page lives under wiki/queries/, so qualify it under `queries/`.
-  // Non-critical: embedding failures (e.g. missing VOYAGE_API_KEY) don't block save.
+  // Non-critical: local embedding or R2R failures do not block the saved page.
   try {
-    await updateEmbeddingsLockedCore(root, [qualifiedPageId(path.basename(QUERIES_DIR), slug)]);
+    const outcome = await refreshSemanticIndexLockedCore(
+      root,
+      [qualifiedPageId(path.basename(QUERIES_DIR), slug)],
+    );
+    assertSemanticSyncSucceeded(outcome);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    handleSafeEmbeddingFailure(err, `Skipped embeddings update: ${message}`);
+    handleSafeEmbeddingFailure(err, `Skipped semantic index update: ${message}`);
   }
 
   return slug;

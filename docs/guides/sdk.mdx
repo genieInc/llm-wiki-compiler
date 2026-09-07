@@ -34,6 +34,94 @@ const wiki = createWiki({ root: "./my-wiki" });
 
 A missing root is valid - `ingest` and `ingestText` create `sources/` via recursive `mkdir` on first write. If the path already exists and is not a directory, `createWiki` throws immediately with a clear error.
 
+### Select or inject a semantic backend
+
+`createWiki` accepts an experimental `semanticBackend` option. A built-in ID
+overrides `LLMWIKI_SEMANTIC_BACKEND` for this Wiki instance only:
+
+```ts
+const wiki = createWiki({
+  root: "./my-wiki",
+  semanticBackend: "r2r",
+});
+```
+
+Selecting `"r2r"` reads R2R connection settings from the process environment.
+That is convenient for the CLI and for a process serving one routing domain.
+An in-process multi-tenant host should instead create an explicit adapter:
+
+```ts
+import { createR2RSemanticBackend, createWiki } from "llm-wiki-compiler";
+
+const wiki = createWiki({
+  root: "./tenant-a-wiki",
+  semanticBackend: createR2RSemanticBackend({
+    baseUrl: "https://r2r.example.com",
+    namespace: "tenant-a-wiki",
+    accessToken: tenant.r2rAccessToken,
+  }),
+});
+```
+
+With no `collectionId`, R2R assigns documents to the authenticated tenant's
+default collection. Explicit R2R options are validated and snapshotted when the
+adapter is created. They do not inherit any R2R routing, tuning, or credentials
+from `process.env`. Chat-provider configuration remains independent and
+continues to use the normal provider settings.
+
+For a service that shares one adapter across many Wiki roots, pass a trusted
+async resolver. The host owns the mapping between its tenant identity and each
+R2R credential/namespace binding; llmwiki neither imports the host's database
+layer nor infers tenant identity:
+
+```ts
+const commonR2R = {
+  baseUrl: "https://r2r.example.com",
+  apiKey: process.env.R2R_API_KEY,
+};
+
+const backend = createR2RSemanticBackend(async ({ root }) => {
+  const binding = await semanticBindings.findByWikiRoot(root);
+  if (!binding) throw new Error("No semantic binding for wiki root");
+  return {
+    ...commonR2R,
+    namespace: binding.namespace,
+    ...(binding.collectionId && { collectionId: binding.collectionId }),
+  };
+});
+
+const tenantA = createWiki({ root: "./tenant-a", semanticBackend: backend });
+const tenantB = createWiki({ root: "./tenant-b", semanticBackend: backend });
+await Promise.all([tenantA.search("roadmap"), tenantB.search("roadmap")]);
+```
+
+The resolver receives the normalized absolute Wiki root. Its result is
+validated independently on every load or synchronization. A load captures an
+immutable snapshot in that reader; a sync uses one immutable snapshot for its
+whole reconciliation. `AsyncLocalStorage` scopes the selected backend to each
+Wiki call tree, while the R2R reader keeps request-local cache state. Do not
+mutate `process.env` to switch tenants between concurrent calls.
+
+Resolvers can run concurrently and should be safe to call more than once.
+llmwiki does not keep an unbounded root-to-tenant cache; hosts that need to
+reduce configuration-store reads can add a bounded, authorization-aware TTL
+cache inside the resolver. This also leaves credential rotation and tenant
+revocation policy under the host's control.
+
+A tenant-specific R2R credential plus a unique namespace provides the cleanest
+default-collection isolation. An optional dedicated collection adds another ACL
+boundary. A shared privileged credential relies on namespace filtering and
+therefore increases the impact of another client omitting that filter. Authorize
+the requested tenant before resolving its binding; namespaces and optional
+collection IDs must come from trusted host configuration, not request parameters.
+
+Advanced hosts can also pass an object implementing the exported
+`SemanticBackend` interface. Its identity, methods, and capability fields are
+validated at construction; every load, search, and sync result is validated
+again at the adapter boundary. Custom remote adapters must return current,
+confined local page content rather than trusting remote result text as an
+output source.
+
 ## Complete example
 
 ```ts
@@ -98,7 +186,9 @@ Both methods return `IngestResult` with `filename`, `chars`, and `truncated` fie
 </ParamField>
 
 <ParamField body="wiki.search(question)" type="Promise<PageRecord[]>">
-  Select and hydrate the most relevant page records for a question. Uses semantic embeddings when available, falls back to LLM-based index selection. **Requires LLM credentials.**
+  Select and hydrate the most relevant page records for a question. Uses the
+  selected [semantic backend](/configuration/semantic-backends) when available,
+  then falls back to LLM-based live-page selection. **Requires LLM credentials.**
 
   Returns an array of full `PageRecord` objects including frontmatter and body.
 </ParamField>
@@ -160,7 +250,10 @@ Both methods return `IngestResult` with `filename`, `chars`, and `truncated` fie
   - `options.topPages` - max primary pages
   - `options.topChunks` - max semantic chunks
 
-  Semantic retrieval is opportunistic - when embeddings are not available the pack falls back to lexical ranking with a warning. No credentials required.
+  Semantic retrieval is opportunistic. When the selected local or R2R index is
+  unavailable, the pack falls back to lexical ranking with a warning. No chat
+  credentials are required; an authenticated R2R deployment still requires its
+  R2R credential in the process environment.
 </ParamField>
 
 <ParamField body="wiki.exportJson(options?)" type="Promise<JsonExportDocument>">

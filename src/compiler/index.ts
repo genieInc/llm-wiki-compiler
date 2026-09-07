@@ -503,7 +503,7 @@ async function markDeletedAsOrphaned(
  * set (so embeddings refresh covers them) and the new-slug set (so
  * inbound-link resolution scans existing pages for mentions of seed
  * titles). Without that, schema-declared seed pages would land on
- * disk but stay unlinked and absent from the embedding store.
+ * disk but stay unlinked and absent from the selected semantic index.
  */
 async function finalizeWiki(
   root: string,
@@ -538,21 +538,21 @@ async function finalizeWiki(
 }
 
 /**
- * Refresh the embeddings store without failing compilation.
+ * Refresh the selected semantic index without failing compilation.
  * Semantic search is a non-critical enhancement — missing API keys or
  * transient provider errors should produce a warning, not a broken build.
  *
- * DURABLE source↔embeddings consistency with a PER-ID lifecycle: because
+ * DURABLE source↔semantic-index consistency with a PER-ID lifecycle: because
  * source-state is already flushed (sources marked current) by the time this runs
  * and failures are SWALLOWED, a skipped/crashed refresh would otherwise leave stale
- * embeddings that the next compile never revisits (no source change → no refresh).
+ * index state that the next compile never revisits (no source change → no refresh).
  * To close that, the changed page-ids are UNIONED (preserving existing attempt
  * counts) with any prior-pending entries and recorded to a durable, root-confined
  * write-ahead marker BEFORE the attempt. AFTER the attempt the marker is reconciled
  * per-id rather than all-or-nothing:
  *  - SUCCESS → {@link settleAfterSuccess} clears only the ids the core actually
- *    embedded; an id it SKIPPED (transiently ineligible) is retained with an
- *    incremented attempt count, never cleared un-embedded.
+ *    indexed; an id it SKIPPED (transiently ineligible) is retained with an
+ *    incremented attempt count, never cleared unindexed.
  *  - FAILURE → {@link settleAfterFailure} increments attempts for the whole batch.
  * Either way, an id that fails {@link MAX_PENDING_EMBEDDING_ATTEMPTS} times is
  * QUARANTINED (dropped + a visible warning), so a poison id can neither loop forever

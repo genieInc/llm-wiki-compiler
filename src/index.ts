@@ -36,6 +36,37 @@ export {
 export { createWiki } from "./sdk/wiki.js";
 export type { Wiki, CreateWikiOptions, SdkCompileOptions, ContextPackOptions } from "./sdk/types.js";
 
+// @experimental — pluggable semantic storage/retrieval adapter contract.
+export { SemanticBackendError } from "./semantic/contracts.js";
+export type {
+  SemanticBackend,
+  SemanticBackendCapabilities,
+  SemanticBackendErrorCode,
+  SemanticChunkHit,
+  SemanticLoadOutcome,
+  SemanticLoadRequest,
+  SemanticOperation,
+  SemanticPageHit,
+  SemanticReader,
+  SemanticSearchOutcome,
+  SemanticSearchRequest,
+  SemanticSyncFailure,
+  SemanticSyncOutcome,
+  SemanticSyncRequest,
+  SemanticWarning,
+} from "./semantic/contracts.js";
+
+// @experimental — configured R2R adapter factory. Unlike selecting the
+// built-in by string, explicit instances never read R2R routing or credentials
+// from process.env and are safe to bind to concurrent tenant Wiki instances.
+export { createR2RSemanticBackend } from "./semantic/r2r/index.js";
+export type {
+  R2RSearchMode,
+  R2RSemanticBackendContext,
+  R2RSemanticBackendOptions,
+  R2RSemanticBackendResolver,
+} from "./semantic/r2r/index.js";
+
 // Result/input types for the Wiki facade methods, re-exported so typed
 // consumers don't have to deep-import from internal module paths.
 export type { IngestResult, CompileResult, QueryResult } from "./utils/types.js";
