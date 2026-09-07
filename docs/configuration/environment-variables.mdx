@@ -107,8 +107,7 @@ explicitly when you want an external vector database and indexed retrieval.
 |---|---|---|
 | `LLMWIKI_SEMANTIC_BACKEND` | `local` | Semantic index implementation. One of `local` or `r2r` |
 | `R2R_BASE_URL` | `http://localhost:7272` | R2R server URL before `/v3`. Plain HTTP is accepted only for loopback hosts unless explicitly allowed |
-| `R2R_COLLECTION_ID` | Required for R2R | UUID of a collection dedicated to this wiki |
-| `R2R_NAMESPACE` | Required for R2R | Stable lowercase wiki identifier used as an additional metadata filter inside the collection |
+| `R2R_NAMESPACE` | Required for R2R | Stable lowercase wiki identifier, unique within the R2R endpoint and project |
 | `R2R_API_KEY` | *(unset)* | API key sent as `x-api-key` |
 | `R2R_ACCESS_TOKEN` | *(unset)* | Bearer token. Mutually exclusive with `R2R_API_KEY` |
 | `R2R_PROJECT_NAME` | *(unset)* | Optional R2R project sent as `x-project-name` |
@@ -125,9 +124,11 @@ settings are not used, but chat-provider credentials are still required for
 commands that generate text. See [Semantic Backends](/configuration/semantic-backends)
 for setup, data exposure, manifest, recovery, and switching behavior.
 
-These R2R variables configure one process-wide binding. They are suitable for
-the CLI, a tenant-specific child process, or a single-tenant service. An
-in-process multi-tenant SDK host should pass an explicit
+The environment-backed adapter lets R2R assign documents to the authenticated
+user's default collection. These variables configure one process-wide endpoint,
+namespace, and credential binding. They are suitable for the CLI, a
+tenant-specific child process, or a single-tenant service. An in-process
+multi-tenant SDK host should pass an explicit
 `createR2RSemanticBackend` instance to each Wiki, or use its root-aware async
 resolver; it must not switch tenants by mutating `process.env` concurrently.
 See [Multi-tenant SDK hosts](/configuration/semantic-backends#multi-tenant-sdk-hosts).
@@ -240,7 +241,6 @@ ANTHROPIC_API_KEY=sk-ant-...
 # Optional: use R2R instead of .llmwiki/embeddings.json
 # LLMWIKI_SEMANTIC_BACKEND=r2r
 # R2R_BASE_URL=http://localhost:7272
-# R2R_COLLECTION_ID=123e4567-e89b-42d3-a456-426614174000
 # R2R_NAMESPACE=my-team-wiki
 
 # Optional: output language

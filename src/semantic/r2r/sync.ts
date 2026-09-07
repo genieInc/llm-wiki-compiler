@@ -41,7 +41,7 @@ interface SyncScope {
   auditedAt?: string;
 }
 
-/** Reconcile the configured R2R collection with every eligible live wiki page. */
+/** Reconcile the R2R-backed namespace with every eligible live wiki page. */
 export async function syncR2RIndex(
   root: string,
   changedPageIds: PageId[],

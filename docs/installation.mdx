@@ -170,16 +170,16 @@ See [Environment Variables](/configuration/environment-variables) for the full `
 ### External R2R semantic backend
 
 For larger corpora, you can move vector storage and lookup out of
-`.llmwiki/embeddings.json` into an R2R collection:
+`.llmwiki/embeddings.json` into R2R:
 
 ```bash
 export LLMWIKI_SEMANTIC_BACKEND=r2r
 export R2R_BASE_URL=http://localhost:7272
-export R2R_COLLECTION_ID=<dedicated-collection-uuid>
 export R2R_NAMESPACE=<stable-wiki-id>
 ```
 
-R2R embeds and indexes the page chunks in this mode. See
+R2R embeds and indexes the page chunks in the authenticated user's default
+collection in this mode. See
 [Semantic Backends](/configuration/semantic-backends) before enabling it,
 especially if the service is remote or the wiki contains confidential data.
 

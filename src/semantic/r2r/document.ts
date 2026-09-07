@@ -40,7 +40,7 @@ export function projectPageForR2R(
   const chunks = remoteUnits.map((unit) => unit.text);
   const contentHash = contentFingerprint(pageTextHash, chunkTextHashes);
   const documentId = deterministicUuid(
-    `${config.collectionId}\0${config.namespace}\0${page.pageId}\0${contentHash}`,
+    `${config.collectionId ?? ""}\0${config.namespace}\0${page.pageId}\0${contentHash}`,
   );
   return {
     documentId,

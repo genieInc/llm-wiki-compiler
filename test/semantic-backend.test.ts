@@ -16,7 +16,6 @@ import {
   SEMANTIC_BACKEND_ENV,
 } from "../src/semantic/config.js";
 import {
-  R2R_COLLECTION_ID_ENV,
   R2R_NAMESPACE_ENV,
   resolveR2RConfig,
 } from "../src/semantic/r2r/config.js";
@@ -29,12 +28,10 @@ import { loadPendingEmbeddings } from "../src/utils/pending-embeddings.js";
 import * as output from "../src/utils/output.js";
 import { useTempRoot } from "./fixtures/temp-root.js";
 
-const COLLECTION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const temp = useTempRoot();
 
 beforeEach(() => {
   vi.stubEnv(SEMANTIC_BACKEND_ENV, "r2r");
-  vi.stubEnv(R2R_COLLECTION_ID_ENV, COLLECTION_ID);
   vi.stubEnv(R2R_NAMESPACE_ENV, "facade-tests");
   vi.stubEnv("R2R_API_KEY", "");
   vi.stubEnv("R2R_ACCESS_TOKEN", "");

@@ -1,8 +1,8 @@
 /**
  * @file test/r2r-multitenancy.test.ts
  * @description Verifies that the public R2R backend factory snapshots static
- * options, validates dynamic bindings, and keeps collection/namespace routing
- * isolated when one resolver serves concurrent wiki roots.
+ * options, validates dynamic bindings, and keeps optional collection plus
+ * namespace routing isolated when one resolver serves concurrent wiki roots.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -152,7 +152,6 @@ describe("createR2RSemanticBackend multi-tenant routing", () => {
     };
     const backend = createR2RSemanticBackend(options);
     options.collectionId = COLLECTION_BETA;
-    vi.stubEnv("R2R_COLLECTION_ID", COLLECTION_BETA);
     vi.stubEnv("R2R_API_KEY", "global-secret-must-not-leak");
     const transport = installFakeR2R();
 

@@ -35,7 +35,7 @@ llmwiki query "What is multi-head attention and how does it differ from self-att
 1. **Chunk-level semantic search.** The selected semantic backend narrows the
    corpus to a top-K set. The default local backend reads vectors from
    `.llmwiki/embeddings.json` and scores them in process. The optional R2R
-   backend performs indexed retrieval in your R2R collection.
+   backend performs namespace-scoped indexed retrieval in R2R.
 
 2. **BM25 reranking.** The top-K chunks are reranked using BM25 (lexical scoring) to surface chunks where your question's exact terms appear prominently. This corrects for cases where semantic similarity alone would pick conceptually adjacent but not directly relevant content.
 

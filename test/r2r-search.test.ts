@@ -20,7 +20,6 @@ import { writePage } from "./fixtures/write-page.js";
 
 const config: R2RConfig = {
   baseUrl: "https://r2r.example.test",
-  collectionId: "123e4567-e89b-42d3-a456-426614174000",
   namespace: "search-tests",
   searchMode: "basic",
   timeoutMs: 10_000,
@@ -56,7 +55,6 @@ function indexOf(...pages: ReturnType<typeof project>[]): R2RSemanticIndex {
       version: 1,
       identity: {
         baseUrl: config.baseUrl,
-        collectionId: config.collectionId,
         namespace: config.namespace,
       },
       pages: pages.map((page) => page.manifestPage),

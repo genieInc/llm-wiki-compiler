@@ -57,22 +57,22 @@ const wiki = createWiki({
   root: "./tenant-a-wiki",
   semanticBackend: createR2RSemanticBackend({
     baseUrl: "https://r2r.example.com",
-    collectionId: "123e4567-e89b-42d3-a456-426614174000",
     namespace: "tenant-a-wiki",
-    apiKey: process.env.R2R_API_KEY,
+    accessToken: tenant.r2rAccessToken,
   }),
 });
 ```
 
-Explicit R2R options are validated and snapshotted when the adapter is created.
-They do not inherit any R2R routing, tuning, or credentials from `process.env`.
-Chat-provider configuration remains independent and continues to use the
-normal provider settings.
+With no `collectionId`, R2R assigns documents to the authenticated tenant's
+default collection. Explicit R2R options are validated and snapshotted when the
+adapter is created. They do not inherit any R2R routing, tuning, or credentials
+from `process.env`. Chat-provider configuration remains independent and
+continues to use the normal provider settings.
 
 For a service that shares one adapter across many Wiki roots, pass a trusted
-async resolver. The host owns collection provisioning and the mapping between
-its tenant identity and each R2R binding; llmwiki neither imports the host's
-database layer nor creates collections implicitly:
+async resolver. The host owns the mapping between its tenant identity and each
+R2R credential/namespace binding; llmwiki neither imports the host's database
+layer nor infers tenant identity:
 
 ```ts
 const commonR2R = {
@@ -85,8 +85,8 @@ const backend = createR2RSemanticBackend(async ({ root }) => {
   if (!binding) throw new Error("No semantic binding for wiki root");
   return {
     ...commonR2R,
-    collectionId: binding.collectionId,
     namespace: binding.namespace,
+    ...(binding.collectionId && { collectionId: binding.collectionId }),
   };
 });
 
@@ -108,13 +108,12 @@ reduce configuration-store reads can add a bounded, authorization-aware TTL
 cache inside the resolver. This also leaves credential rotation and tenant
 revocation policy under the host's control.
 
-A dedicated collection and namespace per tenant gives the strongest isolation.
-A shared collection with a unique namespace per tenant is supported by the
-retrieval filter, but R2R collection-level permissions then cover all tenants
-in that collection; treat that as an explicit security tradeoff. Prefer
-collection-scoped, least-privilege credentials, and authorize the requested
-tenant before resolving its binding. Collection IDs and namespaces must come
-from trusted host configuration rather than request parameters.
+A tenant-specific R2R credential plus a unique namespace provides the cleanest
+default-collection isolation. An optional dedicated collection adds another ACL
+boundary. A shared privileged credential relies on namespace filtering and
+therefore increases the impact of another client omitting that filter. Authorize
+the requested tenant before resolving its binding; namespaces and optional
+collection IDs must come from trusted host configuration, not request parameters.
 
 Advanced hosts can also pass an object implementing the exported
 `SemanticBackend` interface. Its identity, methods, and capability fields are

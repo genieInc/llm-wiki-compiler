@@ -48,13 +48,15 @@ export class R2RHttpError extends Error {
 export class R2RClient {
   constructor(private readonly config: R2RConfig) {}
 
-  /** Ingest pre-chunked page content synchronously into the configured collection. */
+  /** Ingest pre-chunked content into an explicit or R2R-managed default collection. */
   async createDocument(input: R2RDocumentInput): Promise<void> {
     const form = new FormData();
     form.set("chunks", JSON.stringify(input.chunks));
     form.set("id", input.documentId);
     form.set("metadata", JSON.stringify(input.metadata));
-    form.set("collection_ids", JSON.stringify([this.config.collectionId]));
+    if (this.config.collectionId) {
+      form.set("collection_ids", JSON.stringify([this.config.collectionId]));
+    }
     form.set("run_with_orchestration", "false");
     form.set("ingestion_mode", "custom");
     try {
@@ -74,18 +76,13 @@ export class R2RClient {
     }
   }
 
-  /** Search only the configured collection using R2R's selected preset. */
+  /** Search the wiki namespace, optionally constrained to an explicit collection. */
   async search(query: string, limit: number): Promise<R2RSearchResult[]> {
     const payload = {
       query,
       search_mode: this.config.searchMode,
       search_settings: {
-        filters: {
-          $and: [
-            { collection_ids: { $overlap: [this.config.collectionId] } },
-            { "metadata.llmwiki_namespace": { $eq: this.config.namespace } },
-          ],
-        },
+        filters: searchFilters(this.config),
         limit,
         include_metadatas: false,
         include_scores: true,
@@ -111,10 +108,9 @@ export class R2RClient {
     const result = resultObject(raw);
     const id = stringField(result, "id");
     const status = stringField(result, "ingestion_status", "ingestionStatus")?.toLowerCase();
-    const collections = arrayField(result, "collection_ids", "collectionIds");
     const metadata = isRecord(result.metadata) ? result.metadata : {};
     return id === input.documentId && status === "success"
-      && collections.includes(this.config.collectionId)
+      && documentMatchesCollection(result, this.config.collectionId)
       && idempotencyMetadataMatches(input.metadata, metadata);
   }
 
@@ -162,6 +158,27 @@ export class R2RClient {
       ...(this.config.projectName && { "x-project-name": this.config.projectName }),
     };
   }
+}
+
+/** Build the narrowest filter available without requiring collection setup. */
+function searchFilters(config: R2RConfig): Record<string, unknown> {
+  const namespace = { "metadata.llmwiki_namespace": { $eq: config.namespace } };
+  if (!config.collectionId) return namespace;
+  return {
+    $and: [
+      { collection_ids: { $overlap: [config.collectionId] } },
+      namespace,
+    ],
+  };
+}
+
+/** Enforce explicit collection ownership while accepting R2R's default binding. */
+function documentMatchesCollection(
+  document: Record<string, unknown>,
+  collectionId: string | undefined,
+): boolean {
+  if (!collectionId) return true;
+  return arrayField(document, "collection_ids", "collectionIds").includes(collectionId);
 }
 
 /** Confirm a 409 points to the exact content-addressed llmwiki document. */

@@ -13,9 +13,9 @@ export type R2RSearchMode = "basic" | "advanced" | "custom";
 export interface R2RSemanticBackendOptions {
   /** R2R server URL before `/v3`; defaults to `http://localhost:7272`. */
   readonly baseUrl?: string;
-  /** UUID of the pre-provisioned collection that owns this wiki's documents. */
-  readonly collectionId: string;
-  /** Stable lowercase partition key unique to this wiki inside the collection. */
+  /** Optional UUID of a pre-provisioned collection; otherwise R2R uses the authenticated user's default. */
+  readonly collectionId?: string;
+  /** Stable lowercase wiki key, unique within the R2R endpoint and project. */
   readonly namespace: string;
   /** R2R retrieval preset; defaults to `basic`. */
   readonly searchMode?: R2RSearchMode;
@@ -53,7 +53,7 @@ export type R2RSemanticBackendResolver = (
 /** Fully validated internal R2R connection and indexing configuration. */
 export interface R2RConfig {
   readonly baseUrl: string;
-  readonly collectionId: string;
+  readonly collectionId?: string;
   readonly namespace: string;
   readonly searchMode: R2RSearchMode;
   readonly timeoutMs: number;
@@ -84,7 +84,6 @@ interface RawR2RConfig {
 
 interface R2RConfigLabels {
   baseUrl: string;
-  collectionId: string;
   namespace: string;
   searchMode: string;
   timeoutMs: string;
@@ -107,7 +106,6 @@ const OPTION_NUMBER_KEYS = [
 ] as const;
 
 export const R2R_BASE_URL_ENV = "R2R_BASE_URL";
-export const R2R_COLLECTION_ID_ENV = "R2R_COLLECTION_ID";
 export const R2R_NAMESPACE_ENV = "R2R_NAMESPACE";
 export const R2R_SEARCH_MODE_ENV = "R2R_SEARCH_MODE";
 const R2R_TIMEOUT_ENV = "R2R_TIMEOUT_MS";
@@ -132,7 +130,6 @@ const SEARCH_MODES = new Set<R2RSearchMode>(["basic", "advanced", "custom"]);
 
 const ENV_LABELS: R2RConfigLabels = {
   baseUrl: R2R_BASE_URL_ENV,
-  collectionId: R2R_COLLECTION_ID_ENV,
   namespace: R2R_NAMESPACE_ENV,
   searchMode: R2R_SEARCH_MODE_ENV,
   timeoutMs: R2R_TIMEOUT_ENV,
@@ -148,7 +145,6 @@ const ENV_LABELS: R2RConfigLabels = {
 
 const OPTION_LABELS: R2RConfigLabels = {
   baseUrl: "baseUrl",
-  collectionId: "collectionId",
   namespace: "namespace",
   searchMode: "searchMode",
   timeoutMs: "timeoutMs",
@@ -166,7 +162,6 @@ const OPTION_LABELS: R2RConfigLabels = {
 export function resolveR2RConfig(env: NodeJS.ProcessEnv = process.env): R2RConfig {
   return normalizeR2RConfig({
     baseUrl: env[R2R_BASE_URL_ENV],
-    collectionId: env[R2R_COLLECTION_ID_ENV],
     namespace: env[R2R_NAMESPACE_ENV],
     searchMode: env[R2R_SEARCH_MODE_ENV],
     timeoutMs: env[R2R_TIMEOUT_ENV],
@@ -207,10 +202,11 @@ function normalizeR2RConfig(raw: RawR2RConfig, labels: R2RConfigLabels): R2RConf
   const apiKey = optionalString(raw.apiKey, labels.apiKey);
   const accessToken = optionalString(raw.accessToken, labels.accessToken);
   const projectName = optionalString(raw.projectName, labels.projectName);
+  const collectionId = optionalUuid(raw.collectionId, "collectionId");
   assertUnambiguousAuth(apiKey, accessToken, labels);
   return Object.freeze({
     baseUrl: resolveBaseUrl(raw.baseUrl, raw.allowInsecureHttp, labels),
-    collectionId: requiredUuid(raw.collectionId, labels.collectionId),
+    ...(collectionId && { collectionId }),
     namespace: requiredNamespace(raw.namespace, labels.namespace),
     searchMode: resolveSearchMode(raw.searchMode, labels.searchMode),
     timeoutMs: positiveInteger(raw.timeoutMs, DEFAULT_R2R_TIMEOUT_MS, labels.timeoutMs),
@@ -307,10 +303,11 @@ function resolveSearchMode(raw: unknown, name: string): R2RSearchMode {
   return mode;
 }
 
-/** Require an RFC-4122 UUID suitable for R2R document/collection fields. */
-function requiredUuid(raw: unknown, name: string): string {
+/** Validate an optional RFC-4122 UUID suitable for R2R collection fields. */
+function optionalUuid(raw: unknown, name: string): string | undefined {
   const value = optionalString(raw, name);
-  if (!value || !UUID_PATTERN.test(value)) throw new Error(`${name} must be a valid UUID.`);
+  if (!value) return undefined;
+  if (!UUID_PATTERN.test(value)) throw new Error(`${name} must be a valid UUID.`);
   return value.toLowerCase();
 }
 

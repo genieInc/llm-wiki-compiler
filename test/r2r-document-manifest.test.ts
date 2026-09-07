@@ -2,7 +2,7 @@
  * @file test/r2r-document-manifest.test.ts
  * @description Covers deterministic R2R page projection and the bounded local
  * reconciliation manifest. The manifest is intentionally text/vector-free and
- * isolated per endpoint, collection, and project identity.
+ * isolated per endpoint, optional collection, and project identity.
  */
 
 import { readFile, writeFile } from "fs/promises";
@@ -24,7 +24,6 @@ import { useTempRoot } from "./fixtures/temp-root.js";
 const COLLECTION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const config: R2RConfig = {
   baseUrl: "https://r2r.example.test",
-  collectionId: COLLECTION_ID,
   namespace: "document-tests",
   searchMode: "basic",
   timeoutMs: 10_000,
@@ -94,9 +93,9 @@ describe("R2R manifest", () => {
     expect(raw).not.toContain("vector");
   });
 
-  it("uses a separate manifest leaf for another collection", async () => {
+  it("uses a separate manifest leaf for an explicit collection", async () => {
     await writeR2RManifest(temp.dir, config, emptyR2RManifest(config));
-    const other = { ...config, collectionId: "323e4567-e89b-42d3-a456-426614174000" };
+    const other = { ...config, collectionId: COLLECTION_ID };
     expect(manifestFilename(other)).not.toBe(manifestFilename(config));
     expect(await readR2RManifest(temp.dir, other)).toEqual({ kind: "absent" });
   });

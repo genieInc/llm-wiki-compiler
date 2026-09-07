@@ -25,7 +25,7 @@ export interface R2RManifestPage {
 /** Non-secret identity that determines which R2R deployment owns the manifest. */
 export interface R2RManifestIdentity {
   baseUrl: string;
-  collectionId: string;
+  collectionId?: string;
   namespace: string;
   projectName?: string;
 }

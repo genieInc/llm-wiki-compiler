@@ -1,8 +1,8 @@
 /**
  * @file test/r2r-client.test.ts
  * @description Pins llmwiki's narrow R2R v3 HTTP contract: synchronous
- * pre-chunked ingestion, collection-scoped retrieval, authentication headers,
- * idempotent content-addressed creates, and deletion of obsolete documents.
+ * pre-chunked ingestion into default or explicit collections, namespace-scoped
+ * retrieval, authentication, idempotent creates, and obsolete-document deletion.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,9 +17,8 @@ const DOCUMENT_METADATA = {
   llmwiki_content_hash: "a".repeat(64),
   llmwiki_schema_version: 1,
 };
-const config: R2RConfig = {
+const defaultCollectionConfig: R2RConfig = {
   baseUrl: "https://r2r.example.test/prefix",
-  collectionId: COLLECTION_ID,
   namespace: "client-tests",
   searchMode: "advanced",
   timeoutMs: 10_000,
@@ -30,6 +29,7 @@ const config: R2RConfig = {
   apiKey: "secret",
   projectName: "wiki",
 };
+const config: R2RConfig = { ...defaultCollectionConfig, collectionId: COLLECTION_ID };
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -51,6 +51,17 @@ describe("R2RClient", () => {
     expect(JSON.parse(String(form.get("chunks")))).toEqual(["one"]);
     expect(form.get("run_with_orchestration")).toBe("false");
     expect(form.get("collection_ids")).toBe(JSON.stringify([COLLECTION_ID]));
+  });
+
+  it("lets R2R select the authenticated user's default collection", async () => {
+    const fetchMock = mockFetch(Response.json({ results: {} }));
+    await new R2RClient(defaultCollectionConfig).createDocument({
+      documentId: DOCUMENT_ID,
+      chunks: ["one"],
+      metadata: DOCUMENT_METADATA,
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.body as FormData).has("collection_ids")).toBe(false);
   });
 
   it("treats a 409 as success only when the existing document is usable", async () => {
@@ -105,6 +116,23 @@ describe("R2RClient", () => {
     await expect(create).rejects.toBeInstanceOf(R2RHttpError);
   });
 
+  it("accepts a matching conflict from the R2R-managed default collection", async () => {
+    const conflict = new Response("exists", { status: 409 });
+    const existing = Response.json({ results: {
+      id: DOCUMENT_ID,
+      ingestion_status: "success",
+      collection_ids: [COLLECTION_ID],
+      metadata: DOCUMENT_METADATA,
+    } });
+    mockFetch(conflict, existing);
+    const create = new R2RClient(defaultCollectionConfig).createDocument({
+      documentId: DOCUMENT_ID,
+      chunks: ["one"],
+      metadata: DOCUMENT_METADATA,
+    });
+    await expect(create).resolves.toBeUndefined();
+  });
+
   it("scopes retrieval to the configured collection and sends auth safely", async () => {
     const response = Response.json({ results: { chunk_search_results: [
       { document_id: DOCUMENT_ID, text: "hit", score: 0.9 },
@@ -125,6 +153,17 @@ describe("R2RClient", () => {
     expect(headers.get("x-project-name")).toBe("wiki");
     expect(init.redirect).toBe("error");
     expect(hits[0]?.documentId).toBe(DOCUMENT_ID);
+  });
+
+  it("searches only the namespace when R2R owns collection selection", async () => {
+    const response = Response.json({ results: { chunk_search_results: [] } });
+    const fetchMock = mockFetch(response);
+    await new R2RClient(defaultCollectionConfig).search("question", 12);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(init.body));
+    expect(payload.search_settings.filters).toEqual({
+      "metadata.llmwiki_namespace": { $eq: "client-tests" },
+    });
   });
 
   it("accepts deletion of an already absent document", async () => {

@@ -2,9 +2,9 @@
  * @file src/semantic/r2r/manifest.ts
  * @description Confined, bounded persistence for the R2R reconciliation
  * manifest. A separate identity-derived leaf is used for each endpoint,
- * collection, and R2R project, so changing backends cannot orphan one
+ * optional collection, and R2R project, so changing backends cannot orphan one
  * configuration's state by overwriting it with another configuration's IDs.
- * The required wiki namespace also prevents tenant mixing in one collection.
+ * The required wiki namespace also prevents result mixing in a default collection.
  */
 
 import { createHash } from "node:crypto";
@@ -69,7 +69,7 @@ export async function writeR2RManifest(
   await atomicWrite(file, body, { confineRoot: root, durable: true, mode: 0o600 });
 }
 
-/** Stable manifest leaf for one endpoint/collection/project identity. */
+/** Stable manifest leaf for one endpoint/optional-collection/project identity. */
 export function manifestFilename(config: R2RConfig): string {
   const digest = createHash("sha256").update(JSON.stringify(manifestIdentity(config))).digest("hex").slice(0, 16);
   return `${MANIFEST_PREFIX}${digest}.json`;
@@ -152,7 +152,7 @@ function parseUnit(raw: unknown): R2RManifestUnit | null {
 function manifestIdentity(config: R2RConfig): R2RManifestIdentity {
   return {
     baseUrl: config.baseUrl,
-    collectionId: config.collectionId,
+    ...(config.collectionId && { collectionId: config.collectionId }),
     namespace: config.namespace,
     ...(config.projectName && { projectName: config.projectName }),
   };

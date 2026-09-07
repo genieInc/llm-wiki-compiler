@@ -20,24 +20,24 @@ loading, or wikilink graph expansion.
 
 ## Configure R2R
 
-Start an R2R v3 server and create a collection dedicated to this wiki. Copy the
-collection UUID, then set:
+Start an R2R v3 server, then select the backend and give this wiki a stable
+namespace:
 
 ```bash
 export LLMWIKI_SEMANTIC_BACKEND=r2r
 export R2R_BASE_URL=http://localhost:7272
-export R2R_COLLECTION_ID=123e4567-e89b-42d3-a456-426614174000
 export R2R_NAMESPACE=my-team-wiki
 
 llmwiki compile
 ```
 
-`R2R_BASE_URL` is the server base URL before `/v3`. The default is
-`http://localhost:7272`. `R2R_COLLECTION_ID` is required and must be a UUID.
-`R2R_NAMESPACE` is also required: choose a stable, lowercase identifier unique
-to this wiki within the collection. llmwiki applies both filters to every
-search, so results from another wiki cannot consume this wiki's candidate
-window. It does not create or choose a collection automatically.
+`R2R_BASE_URL` is the server base URL before `/v3`; the default is
+`http://localhost:7272`. `R2R_NAMESPACE` is required: choose a stable,
+lowercase identifier unique within the R2R endpoint and project.
+llmwiki sends no collection during this environment-configured flow, so R2R
+assigns ingested documents to the authenticated user's default collection.
+Every search still filters by the namespace, in addition to R2R's own access
+filters.
 
 The environment selector is process-wide. It is appropriate for an interactive
 CLI process, a child process launched with a tenant-specific environment, or a
@@ -70,17 +70,17 @@ function openTenantWiki(tenant: TenantRecord) {
     root: tenant.wikiRoot,
     semanticBackend: createR2RSemanticBackend({
       baseUrl: "https://r2r.example.com",
-      collectionId: tenant.wikiCollectionId,
       namespace: `tenant-${tenant.id}`,
-      apiKey: process.env.R2R_API_KEY,
+      accessToken: tenant.r2rAccessToken,
     }),
   });
 }
 ```
 
-Static options are copied, validated, and detached from the environment when
-the adapter is created. A shared adapter can instead receive a synchronous or
-asynchronous resolver:
+With no `collectionId`, R2R uses the default collection belonging to that
+tenant credential. Static options are copied, validated, and detached from the
+environment when the adapter is created. A shared adapter can instead receive
+a synchronous or asynchronous resolver:
 
 ```ts
 const backend = createR2RSemanticBackend(async ({ root }) => {
@@ -88,9 +88,10 @@ const backend = createR2RSemanticBackend(async ({ root }) => {
   if (!binding) throw new Error("Unknown wiki root");
   return {
     baseUrl: binding.baseUrl,
-    collectionId: binding.collectionId,
     namespace: binding.namespace,
     accessToken: binding.accessToken,
+    // Optional: add a dedicated collection ACL boundary when provisioned.
+    ...(binding.collectionId && { collectionId: binding.collectionId }),
   };
 });
 
@@ -108,21 +109,22 @@ cache bindings indefinitely: the host can apply an authorization-aware,
 bounded-TTL cache if its configuration store needs one, while still allowing
 credential rotation and tenant revocation to take effect.
 
-Collection provisioning remains an application responsibility. A generic
-library cannot safely infer a tenant, authorization policy, retention policy,
-or collection lifecycle. Keep that mapping in the host's trusted configuration
-or storage layer and return it from the resolver; no host database dependency
+R2R creates and owns each user's default collection. Provisioning a separate
+collection is optional and remains an application responsibility because a
+generic library cannot infer tenant authorization, retention, or collection
+lifecycle. If the host uses explicit collections, keep their IDs in trusted
+configuration and return them from the resolver; no host database dependency
 belongs in llmwiki.
 
-For the strongest tenant boundary, provision a dedicated collection and a
-unique namespace per wiki. Sharing one collection across tenants is technically
-supported because every llmwiki query also filters by namespace, but R2R access
-control remains collection-scoped. A shared collection therefore reduces ACL
-isolation and increases the impact of an operator or non-llmwiki client omitting
-the metadata filter. Prefer a least-privilege R2R credential that can access
-only the intended collection. Resolve bindings only after the host authorizes
-the tenant; never copy a collection ID or namespace directly from untrusted
-request input.
+For the strongest tenant boundary, use a tenant-specific R2R credential and a
+unique namespace; an explicit dedicated collection can add another ACL
+boundary. A shared privileged credential relies on llmwiki's namespace filter
+for separation and increases the impact of another client omitting that filter.
+Resolve bindings only after the host authorizes the tenant, and never copy a
+namespace or optional collection ID directly from untrusted request input.
+When moving a wiki to a different R2R user/default collection, also assign a new
+namespace or remove its local R2R manifest so the next compile performs a full
+bootstrap.
 
 ## Authentication and projects
 
@@ -165,12 +167,13 @@ connection. Prefer TLS.
 | `R2R_FULL_SYNC_INTERVAL_MS` | `86400000` | Interval between full local reconciliation audits; normal sync remains changed-ID-only |
 
 llmwiki requests more remote candidates than it ultimately returns. R2R search
-is collection-and-namespace scoped, graph search is disabled for this vector
-candidate pass, and metadata decoration is disabled so exact-text verification
-remains stable. llmwiki then reads only those local candidate files, applies the
-active profile's `includeInSearch` or `includeInContext` setting, checks
-freshness, and fills the requested top-K. It does not enumerate all wiki pages
-on each remote query. BM25 reranking continues to run locally for `query`.
+is namespace-scoped and is additionally collection-scoped when an SDK adapter
+supplies `collectionId`. Graph search is disabled for this vector candidate
+pass, and metadata decoration is disabled so exact-text verification remains
+stable. llmwiki then reads only those local candidate files, applies the active
+profile's `includeInSearch` or `includeInContext` setting, checks freshness, and
+fills the requested top-K. It does not enumerate all wiki pages on each remote
+query. BM25 reranking continues to run locally for `query`.
 
 ## Data and trust boundary
 
@@ -198,10 +201,10 @@ The manifest is written as:
 ```
 
 It contains page IDs, R2R document IDs, timestamps, and SHA-256 hashes. It does
-not contain page text or vectors. Endpoint, collection, and project identity
-plus the wiki namespace select the filename, so changing one does not overwrite
-another deployment's reconciliation state. Keep the namespace stable: changing
-it intentionally creates a separate index identity and does not delete documents
+not contain page text or vectors. Endpoint, project, optional collection, and
+wiki namespace select the filename, so changing one does not overwrite another
+deployment's reconciliation state. Keep the namespace stable: changing it
+intentionally creates a separate index identity and does not delete documents
 owned by the old namespace.
 
 ## Failures and recovery
@@ -221,7 +224,7 @@ is missing, or a result is stale, llmwiki surfaces a warning and uses the
 existing live-page or lexical fallback where that surface supports one.
 
 If an operator deletes R2R documents outside llmwiki, remove the matching local
-R2R manifest and run `llmwiki compile` to rebuild the selected collection state.
+R2R manifest and run `llmwiki compile` to rebuild the selected namespace state.
 
 ## Switch back to local JSON
 
@@ -236,7 +239,7 @@ Selecting R2R does not delete `.llmwiki/embeddings.json`. While R2R is active,
 that file is ignored and not refreshed. The next local compile verifies it
 against live page hashes and repairs missing or stale entries.
 
-The R2R manifest and remote collection also remain intact when you switch back.
+The R2R manifest and remote documents also remain intact when you switch back.
 Remove them separately only when you intentionally want to retire that index.
 
 ## Backend extension contract

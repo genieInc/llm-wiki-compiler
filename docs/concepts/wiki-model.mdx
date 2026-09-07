@@ -52,7 +52,7 @@ wiki/
     The default local semantic store. Carries page-level and chunk-level vectors under qualified page ids for `llmwiki query` and `llmwiki context` cosine-similarity retrieval. Updated incrementally alongside source changes - only chunks whose content changed are re-embedded.
   </Card>
   <Card title="r2r-index-*.json" icon="server">
-    The optional R2R reconciliation manifest. Carries document IDs and SHA-256 freshness hashes, but no page text or vectors. The endpoint, collection, and project select the filename. See [Semantic Backends](/configuration/semantic-backends).
+    The optional R2R reconciliation manifest. Carries document IDs and SHA-256 freshness hashes, but no page text or vectors. The endpoint, namespace, project, and optional collection select the filename. See [Semantic Backends](/configuration/semantic-backends).
   </Card>
   <Card title="candidates/" icon="clock">
     JSON records for pages held for review - either via `llmwiki compile --review`, triggered automatically by a review policy in `config.json`, or staged by `llmwiki import --okf`. Each candidate records exactly why it was held (low confidence, contradicted, schema-violating, provenance-violating, or imported from OKF). Rejected candidates move to `candidates/archive/` for audit.

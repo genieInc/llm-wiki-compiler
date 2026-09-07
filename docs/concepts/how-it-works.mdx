@@ -59,7 +59,7 @@ Retrieval runs over the compiled wiki, not raw source chunks.
 
 <Steps>
   <Step title="Semantic candidate retrieval">
-    The default `.llmwiki/embeddings.json` backend scores chunk vectors in process. The optional R2R backend asks a dedicated collection for indexed results. Both narrow the wiki to a small top-K under qualified page ids.
+    The default `.llmwiki/embeddings.json` backend scores chunk vectors in process. The optional R2R backend asks its namespace in R2R for indexed results. Both narrow the wiki to a small top-K under qualified page ids.
   </Step>
   <Step title="BM25 rerank">
     The candidate set is reranked using BM25 to boost lexically relevant pages that dense retrieval may have under-ranked.
