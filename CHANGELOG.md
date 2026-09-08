@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Embedding refresh opt-out** — `LLMWIKI_EMBEDDINGS=off` skips embedding
+  refreshes without reading or writing the durable pending queue. This lets
+  deployments with their own semantic index keep compile and review workflows
+  while avoiding an embedding store they never consume. Unset and other values
+  preserve the existing behavior.
+
 - **Separate embedding provider** — `LLMWIKI_EMBEDDING_PROVIDER` selects the backend that serves embeddings, independently of `LLMWIKI_PROVIDER`. This makes split setups possible, such as Claude Agent SDK for generation with a local vLLM instance serving embeddings over its OpenAI-compatible endpoint. Valid values are `anthropic`, `claude-agent`, `openai`, and `ollama`. `minimax` and `copilot` expose no embeddings API, and naming one now fails with a clear error listing the valid values instead of an opaque failure from the provider's `embed()`. When the variable is set, the provider's own credential is required — `VOYAGE_API_KEY` for `anthropic` and `claude-agent`, `OPENAI_API_KEY` for `openai` — unless `OPENAI_EMBEDDINGS_BASE_URL` points at a self-hosted endpoint, which needs no key. Behaviour is unchanged when the variable is unset.
 
   Thanks to **@knew-inventai** for the request (#154).
