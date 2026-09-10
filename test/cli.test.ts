@@ -54,7 +54,7 @@ describe("CLI smoke tests", () => {
 
   it("prints version", async () => {
     const { stdout } = await exec("node", [CLI, "--version"]);
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(stdout.trim()).toBe("1.2.0-genieai.1");
   }, 30_000);
 
   it("advertises --concurrency on every command that drives a compile", async () => {
