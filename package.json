@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "benchmark:review": "node scripts/benchmark-review-batch.mjs",
     "dev": "tsup --watch",
     "dev:view": "node scripts/dev-viewer.mjs",
     "vendor:fonts": "node scripts/vendor-fonts.mjs",
