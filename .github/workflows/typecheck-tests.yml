@@ -3,7 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, cromo-525-upstream-main]
 permissions:
   contents: read
 env:
