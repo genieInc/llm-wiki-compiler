@@ -24,7 +24,7 @@
 
 import { loadNonDefaultProfile } from "../profile/block.js";
 import { acquireLock, releaseLock } from "../utils/lock.js";
-import { planPageMutation } from "./planner.js";
+import { planPageMutation, type PagePlannedMutation } from "./planner.js";
 import { applyApprovedMutationsLocked } from "./executor.js";
 import { readCandidate, deleteCandidate } from "../compiler/candidates.js";
 import { validateLiveTypedPage } from "./typed-page-validate.js";
@@ -89,6 +89,16 @@ export async function applyTypedCandidate(
   root: string,
   candidate: ReviewCandidate,
 ): Promise<string> {
+  const planned = await planTypedCandidate(root, candidate);
+  await applyApprovedMutationsLocked(root, planned);
+  return typedPagePath(candidate.targetEntityType!, candidate.slug);
+}
+
+/** Validate and plan a typed approval under the caller's lock without writing pages. */
+export async function planTypedCandidate(
+  root: string,
+  candidate: ReviewCandidate,
+): Promise<PagePlannedMutation[]> {
   const entityType = candidate.targetEntityType!;
   const loaded = await loadNonDefaultProfile(root);
   if (!loaded) throw new CandidateProfileError(entityType, "no-profile");
@@ -115,8 +125,7 @@ export async function applyTypedCandidate(
   if (planned.length === 0) {
     throw new CandidatePromotionBlockedError(entityType, candidate.slug);
   }
-  await applyApprovedMutationsLocked(root, planned);
-  return typedPagePath(entityType, candidate.slug);
+  return planned;
 }
 
 /**
