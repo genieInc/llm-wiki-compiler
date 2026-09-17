@@ -1,6 +1,10 @@
+/**
+ * Exercises public CLI help, release identity, and provider preflight behavior.
+ * Release identity is checked against package metadata, including prereleases.
+ */
 import { describe, it, expect } from "vitest";
 import path from "path";
-import { mkdir, rm, writeFile } from "fs/promises";
+import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { exec, CLI } from "./fixtures/cli-runner.js";
 
@@ -53,8 +57,11 @@ describe("CLI smoke tests", () => {
   }, 30_000);
 
   it("prints version", async () => {
+    const { version } = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
     const { stdout } = await exec("node", [CLI, "--version"]);
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(stdout.trim()).toBe(version);
   }, 30_000);
 
   it("advertises --concurrency on every command that drives a compile", async () => {

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0-genieai.0] - 2026-09-17
+
+### Development prerelease
+
+- Fork-only development build based on upstream main
+  `6e81181d064d85e8543c8eeba1e622517dbdc942` and GenieAI fork PR #3.
+  This is not an upstream release or a production-readiness claim.
+- Added `review approve-batch --input manifest.json --json` with bounded
+  manifests, per-candidate results, one project lock, and shared finalization.
+- Reject conflicting source snapshots and competing page targets, including
+  case-insensitive filesystem aliases, before publishing the batch.
+- Reconcile embeddings only for affected pages, preserving unrelated retry
+  entries. Persist affected-page recovery intent across finalization failures
+  so retries also repair collateral link changes.
+- See the [review guide](docs/cli/review.mdx) for partial-success semantics,
+  conservative typed-gate behavior, manifest limits, and recovery guarantees.
+  Whole-operation atomicity and application-level rollback are not provided.
+
+The following upstream changes were unreleased at this prerelease's base:
+
 ### Added
 
 - Persistent lint and status warnings for quarantined embedding refreshes,

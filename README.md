@@ -5,6 +5,14 @@
 [![docs](https://img.shields.io/badge/docs-llmwiki.atomicstrata.ai-blue)](https://llmwiki.atomicstrata.ai)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+## GenieAI development prerelease: 1.4.0-genieai.0
+
+This fork-only prerelease is intended for development validation, not production
+or an upstream release. It adds bounded `review approve-batch` manifests, shared
+finalization, fail-closed target/source conflicts, and durable recovery of affected
+embedding work. See the [review guide](docs/cli/review.mdx) for the contract and
+recovery limits, and the [changelog](CHANGELOG.md) for release details.
+
 ## New in 1.3 — A fresh look for your wiki.
 
 Meet Scientific Clay, with soft surfaces and rounded typography, and Minimal, which follows your system’s light or dark setting. Switch instantly between four themes, including Nebula Light and Dark.
