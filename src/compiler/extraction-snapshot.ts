@@ -24,7 +24,7 @@ const conceptSchema = z.object({
   promptModifiers: z.array(z.string()).optional(),
 }).strict();
 const snapshotSchema = z.object({
-  fingerprint: z.string(), sourceHash: z.string(), concepts: z.array(conceptSchema).min(1),
+  fingerprint: z.string(), sourceHash: z.string(), concepts: z.array(conceptSchema),
 }).strict();
 
 /** Hash the bytes actually supplied to extraction, not a later disk read. */
