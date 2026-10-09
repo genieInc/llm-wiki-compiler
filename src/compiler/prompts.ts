@@ -14,6 +14,7 @@ import type { PageKindRule, SeedPage } from "../schema/index.js";
 import { languageDirective } from "../utils/output-language.js";
 import { activeSystemPolicy } from "./prompt-modifiers.js";
 import { sourcesSectionEnabled } from "../utils/sources-section.js";
+import { plainConceptTitle } from "./concept-title.js";
 
 /**
  * Build a list of optional prompt lines, omitting empty entries so the
@@ -46,7 +47,7 @@ function sourcesSectionLines(): string[] {
  * downstream auditor can distinguish pages produced under different prompt
  * generations even when the model id is identical. Format is `vMAJOR`.
  */
-export const PROMPT_VERSION = "v5";
+export const PROMPT_VERSION = "v7";
 
 /**
  * The caller's system policy as prompt lines, or nothing when none is set.
@@ -169,8 +170,11 @@ export function buildExtractionPrompt(
   return [
     ...withLangLine(
       "You are a knowledge extraction engine. Analyze the following source document",
-      "and identify 3-8 distinct, meaningful concepts worth documenting as wiki pages.",
-      "Each concept should be a standalone topic that someone might look up.",
+      "and identify distinct, meaningful concepts supported by this document.",
+      "There is no minimum or target number of concepts. Return an empty concepts array when none are supported.",
+      "Each concept should be a standalone topic that the source can describe without adding outside knowledge.",
+      "A passing mention supports only the stated relationship, not an expanded article about the named topic.",
+      "Keep summaries limited to source-supported facts; do not invent details to fill pages.",
       "Focus on key ideas, techniques, patterns, or entities — not trivial details.",
       "Use the extract_concepts tool to return your findings.",
     ),
@@ -209,9 +213,8 @@ const PAGE_ATTRIBUTION_LINES: readonly string[] = [
   "If a claim relates to a metadata field (e.g. document date or author), leave it uncited.",
   "Source filenames are visible as `--- SOURCE: filename.md ---` headers in the content below.",
   "",
-  "If a paragraph is your inference rather than a direct extraction, leave it",
-  "uncited — downstream lint rules will count uncited paragraphs as 'inferred'",
-  "so lint can surface excess-inferred-paragraphs warnings on review.",
+  "Omit claims that the source material does not support; leaving a claim uncited",
+  "or labeling it as an inference does not make unsupported information acceptable.",
 ];
 
 /**
@@ -269,7 +272,10 @@ export function buildPagePrompt(
   return [
     ...withLangLine(
       'You are a wiki author. Write a clear, well-structured markdown page about the concept named in the "Concept to write about" line after the source material.',
-      "Draw facts only from the provided source material.",
+      "Draw facts only from the provided source material. Faithful paraphrase and synthesis are allowed.",
+      "Do not add general knowledge, assumed procedures, benefits, requirements, or other unsupported details.",
+      "A brief source may warrant a brief page. Do not expand a passing mention beyond its stated facts.",
+      "Existing and related wiki pages are context for organization and links, not evidence for additional claims.",
       ...sourcesSectionLines(),
       "Suggest [[wikilinks]] to related concepts where appropriate.",
       "Write in a neutral, informative tone. Be concise but thorough.",
@@ -330,7 +336,7 @@ function mapRawConcept(c: RawConcept): ExtractedConcept {
     ? (c.provenance_state as ProvenanceState)
     : undefined;
   return {
-    concept: c.concept as string,
+    concept: plainConceptTitle(c.concept as string),
     summary: c.summary as string,
     is_new: c.is_new as boolean,
     tags: Array.isArray(c.tags) ? (c.tags as string[]) : undefined,
@@ -379,15 +385,21 @@ export function buildSeedPagePrompt(
  * @returns Array of ExtractedConcept objects.
  */
 export function parseConcepts(toolOutput: string): ExtractedConcept[] {
+  return parseConceptExtraction(toolOutput) ?? [];
+}
+
+/** Distinguish an explicit no-concepts success from unusable model output. */
+export function parseConceptExtraction(toolOutput: string): ExtractedConcept[] | undefined {
   try {
     const parsed = JSON.parse(toolOutput);
-    let concepts: unknown = parsed.concepts ?? [];
-    if (typeof concepts === "string") {
-      concepts = JSON.parse(concepts);
-    }
-    if (!Array.isArray(concepts)) return [];
-    return concepts.filter(isValidRawConcept).map(mapRawConcept);
+    let concepts: unknown = parsed?.concepts;
+    if (typeof concepts === "string") concepts = JSON.parse(concepts);
+    if (!Array.isArray(concepts)) return undefined;
+    const valid = concepts.filter((entry) => entry && isValidRawConcept(entry));
+    // A partial response cannot safely withdraw any previous assignments.
+    if (valid.length !== concepts.length) return undefined;
+    return valid.map(mapRawConcept);
   } catch {
-    return [];
+    return undefined;
   }
 }

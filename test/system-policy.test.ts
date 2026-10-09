@@ -156,7 +156,7 @@ describe("PROMPT_VERSION", () => {
   // The constant names the prompt IMPLEMENTATION, so a page prompt that offers
   // link targets is a new generation. Pinned because nothing else in the repo
   // asserts its value, and a silent revert would mislabel every page after it.
-  it("is v5, the generation that offers the compile's link targets", () => {
-    expect(PROMPT_VERSION).toBe("v5");
+  it("is v7, the generation that removes the quota and requires source-supported content", () => {
+    expect(PROMPT_VERSION).toBe("v7");
   });
 });

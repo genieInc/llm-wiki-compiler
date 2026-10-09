@@ -8,6 +8,19 @@ Compiling is the step that turns raw source files into a structured, interlinked
 
 Splitting into two phases matters: by completing all extraction before any pages are written, the compiler can merge concepts that appear across multiple sources into a single page, catch extraction failures before anything is committed to disk, and resolve cross-references that would be impossible to wire up in a single pass.
 
+Extraction has no minimum or target concept count. The prompt asks for topics
+supported by the source and allows `concepts: []` when none warrant a page.
+On an ordinary compile, an explicit empty result records the source as processed
+in `.llmwiki/state.json`; an unchanged source is skipped on the next run.
+Malformed or partially invalid output remains a retryable extraction error and
+preserves the source's previous concept assignments.
+
+If a successful extraction drops an earlier assignment, shared pages rebuild
+from remaining contributors without stale page context. Pages with no remaining
+contributors become orphaned. `--review` continues to defer live state changes.
+Prompt guidance does not guarantee factual accuracy; generated pages still need
+the usual review.
+
 ## Basic usage
 
 ```bash
@@ -289,8 +302,8 @@ This is not an input-context limit. `LLMWIKI_PROMPT_BUDGET_CHARS` limits combine
 source text during page generation, not the complete source passed to concept
 extraction. For textbooks, split sources into coherent chapters or sections and
 inspect the stored files under `sources/` to check what ingestion retained.
-Extraction asks for 3–8 concepts per source, not an exhaustive textbook index;
-a larger output budget alone does not guarantee more concepts or valid pages.
+Extraction has no fixed concept count and does not promise an exhaustive textbook
+index; a larger output budget alone does not guarantee more concepts or valid pages.
 
 Changing the output budget does not invalidate successfully compiled sources.
 Failed sources remain retryable; unchanged successful sources are still skipped.

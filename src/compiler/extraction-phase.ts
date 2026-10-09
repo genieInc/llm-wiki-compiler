@@ -20,7 +20,7 @@ import { callClaude } from "../utils/llm.js";
 import {
   CONCEPT_EXTRACTION_TOOL,
   buildExtractionPrompt,
-  parseConcepts,
+  parseConceptExtraction,
 } from "./prompts.js";
 import {
   findLateAffectedSources,
@@ -143,11 +143,12 @@ async function extractForSource(
   const existingIndex = await readConfinedExtractionIndex(root);
   const concepts = await extractConcepts(sourceContent, existingIndex);
 
-  if (concepts.length > 0) {
+  if (concepts && concepts.length > 0) {
     const names = concepts.map((c) => c.concept).join(", ");
     output.status("*", output.dim(`  Found ${concepts.length} concepts: ${names}`));
   }
-  return { sourceFile, sourcePath, sourceContent, concepts,
+  return { sourceFile, sourcePath, sourceContent, concepts: concepts ?? [],
+    ...(concepts === undefined ? { failed: true as const } : {}),
     previousConcepts: reuse.state.sources[sourceFile]?.concepts ?? [] };
 }
 
@@ -181,7 +182,7 @@ async function readConfinedExtractionIndex(root: string): Promise<string> {
 async function extractConcepts(
   sourceContent: string,
   existingIndex: string,
-): Promise<ExtractedConcept[]> {
+): Promise<ExtractedConcept[] | undefined> {
   const system = buildExtractionPrompt(sourceContent, existingIndex);
   const rawOutput = await callClaude({
     system,
@@ -189,5 +190,5 @@ async function extractConcepts(
     tools: [CONCEPT_EXTRACTION_TOOL],
   });
 
-  return parseConcepts(rawOutput);
+  return parseConceptExtraction(rawOutput);
 }
